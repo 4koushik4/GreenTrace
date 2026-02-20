@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Smart Waste Management</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body {
+    margin: 0;
+    font-family: "Segoe UI", sans-serif;
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+    color: white;
+}
+
+.header {
+    padding: 20px 30px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.container {
+    padding: 40px 60px;
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 30px;
+}
+
+.card {
+    background: white;
+    color: black;
+    border-radius: 14px;
+    padding: 25px;
+}
+
+/* Upload */
+.upload-box {
+    margin-top: 20px;
+    border: 2px dashed #4ade80;
+    border-radius: 12px;
+    height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    text-align:center;
+}
+
+.upload-box.drag {
+    background:#dcfce7;
+}
+
+.file-row{
+  margin-top:15px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.choose-btn{
+  padding:8px 14px;
+  border-radius:8px;
+  border:none;
+  background:#4ade80;
+  color:black;
+  cursor:pointer;
+  font-weight:600;
+}
+
+.choose-btn:hover{
+  background:#22c55e;
+}
+
+#fileName{
+  font-size:14px;
+  color:#444;
+}
+
+/* Result */
+.result-box {
+    background: #f8fafc;
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 20px;
+    display: none;
+}
+
+.result-box h4 {
+    margin: 6px 0;
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+    <h2>Smart Waste Management</h2>
+    <p>AI-powered waste segregation system</p>
+</div>
+
+<div class="container">
+
+<div class="cards">
+
+<!-- LEFT -->
+<div class="card">
+  <h3>Scan Waste Item</h3>
+
+  <div class="upload-box" id="dropArea">
+    <img id="previewImage" style="max-height:160px; display:none; border-radius:10px;">
+    <div id="uploadText">
+      📷 <br>
+      <b>Drag & drop or click to upload</b><br>
+      <small>PNG, JPG up to 10MB</small>
+    </div>
+  </div>
+
+  <input type="file" id="imageInput" accept="image/*" hidden>
+
+  <div class="file-row">
+    <button class="choose-btn" id="chooseBtn">Choose File</button>
+    <span id="fileName">No file chosen</span>
+  </div>
+</div>
+
+<!-- RIGHT -->
+<div class="card">
+    <h3>Disposal Guide</h3>
+    <p>AI prediction & disposal instruction</p>
+
+    <div id="resultBox" class="result-box">
+      <h4>Item Class: <span id="itemClass"></span></h4>
+      <h4>Category: <span id="detailClass"></span></h4>
+      <h4>Confidence: <span id="confidence"></span>%</h4>
+      <h4>Disposal Instruction:</h4>
+      <p id="instruction"></p>
+    </div>
+</div>
+
+</div>
+</div>
+
+<script>
+const imageInput = document.getElementById("imageInput");
+const dropArea = document.getElementById("dropArea");
+const chooseBtn = document.getElementById("chooseBtn");
+const fileName = document.getElementById("fileName");
+const previewImage = document.getElementById("previewImage");
+const uploadText = document.getElementById("uploadText");
+
+const itemClass = document.getElementById("itemClass");
+const detailClass = document.getElementById("detailClass");
+const confidence = document.getElementById("confidence");
+const instructionEl = document.getElementById("instruction");
+const resultBox = document.getElementById("resultBox");
+
+const disposalInstructions = {
+  "glass": { category: "Recyclable", text: "Rinse the glass item and place it in the glass recycling bin." },
+  "plastic": { category: "Recyclable", text: "Clean the plastic item and place it in the plastic recycling bin." },
+  "metal": { category: "Recyclable", text: "Rinse the metal item and place it in the metal recycling bin." },
+  "paper": { category: "Recyclable", text: "Ensure paper is clean and dry before recycling." },
+  "cardboard": { category: "Recyclable", text: "Flatten cardboard boxes before recycling." },
+  "trash": { category: "Non-Recyclable", text: "Dispose this item in the general waste bin." },
+  "organic": { category: "Organic Waste", text: "Place this item in compost or organic waste bin." }
+};
+
+// Click open file
+chooseBtn.onclick = () => imageInput.click();
+dropArea.onclick = () => imageInput.click();
+
+// Drag behavior
+["dragenter","dragover"].forEach(ev=>{
+  dropArea.addEventListener(ev,e=>{
+    e.preventDefault();
+    dropArea.classList.add("drag");
+  });
+});
+
+["dragleave","drop"].forEach(ev=>{
+  dropArea.addEventListener(ev,e=>{
+    e.preventDefault();
+    dropArea.classList.remove("drag");
+  });
+});
+
+// Drop file
+dropArea.addEventListener("drop",e=>{
+  imageInput.files = e.dataTransfer.files;
+  imageInput.dispatchEvent(new Event("change"));
+});
+
+// File upload
+imageInput.addEventListener("change", async function(){
+
+  const file = this.files[0];
+  if(!file) return;
+
+  fileName.innerText = file.name;
+
+  const reader = new FileReader();
+  reader.onload = e=>{
+    previewImage.src = e.target.result;
+    previewImage.style.display="block";
+    uploadText.style.display="none";
+  }
+  reader.readAsDataURL(file);
+
+  const formData = new FormData();
+  formData.append("image", file);
+
+  try{
+    const res = await fetch("http://localhost:5000/predict",{
+      method:"POST",
+      body:formData
+    });
+
+    const data = await res.json();
+
+    const className = data.class_name?.trim().toLowerCase();
+
+    if(!className || !disposalInstructions[className]){
+      alert("Unknown or invalid prediction");
+      return;
+    }
+
+    itemClass.innerText = className;
+    detailClass.innerText = disposalInstructions[className].category;
+    confidence.innerText = data.confidence || "N/A";
+    instructionEl.innerText = disposalInstructions[className].text;
+
+    resultBox.style.display="block";
+
+  }catch(err){
+    alert("API error");
+    console.error(err);
+  }
+});
+
+</script>
+
+</body>
+</html>
