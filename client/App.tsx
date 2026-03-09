@@ -34,11 +34,23 @@ import MarketplacePage from "./pages/Marketplace";
 import SellItemPage from "./pages/SellItem";
 import ListingDetailPage from "./pages/ListingDetail";
 
+// Admin / Role-based pages
+import AdminLoginPage from "./pages/AdminLoginPage";
+import AdminDashboardRouter from "./pages/AdminDashboardRouter";
+import SuperAdminDashboard from "./pages/SuperAdminDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import SupervisorDashboard from "./pages/SupervisorDashboard";
+
+// Developer pages
+import DevLoginPage from "./pages/DevLoginPage";
+import DevDashboard from "./pages/DevDashboard";
+
 // Import components
 import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { useAuth as useSupabaseAuth } from "@/lib/supabase";
 import { validateConfig } from "@/lib/config";
+import { AdminAuthProvider } from "@/lib/admin-auth";
 
 const queryClient = new QueryClient();
 
@@ -198,37 +210,49 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <ThemeProvider>
-          <TooltipProvider>
-            <BrowserRouter>
-              <Routes>
-                {/* Public Routes */}
-                <Route
-                  path="/"
-                  element={
-                    <PublicRoute>
-                      <LandingPage />
-                    </PublicRoute>
-                  }
-                />
-                <Route
-                  path="/login"
-                  element={
-                    <PublicRoute>
-                      <LoginPage />
-                    </PublicRoute>
-                  }
-                />
-                <Route
-                  path="/signup"
-                  element={
-                    <PublicRoute>
-                      <SignupPage />
-                    </PublicRoute>
-                  }
-                />
+        <AdminAuthProvider>
+          <ThemeProvider>
+            <TooltipProvider>
+              <BrowserRouter>
+                <Routes>
+                  {/* Public Routes */}
+                  <Route
+                    path="/"
+                    element={
+                      <PublicRoute>
+                        <LandingPage />
+                      </PublicRoute>
+                    }
+                  />
+                  <Route
+                    path="/login"
+                    element={
+                      <PublicRoute>
+                        <LoginPage />
+                      </PublicRoute>
+                    }
+                  />
+                  <Route
+                    path="/signup"
+                    element={
+                      <PublicRoute>
+                        <SignupPage />
+                      </PublicRoute>
+                    }
+                  />
 
-                {/* Protected Routes */}
+                  {/* Admin / Staff Routes */}
+                  <Route path="/admin/login" element={<AdminLoginPage />} />
+                  <Route path="/admin/dashboard" element={<AdminDashboardRouter />} />
+                  <Route path="/admin/super-admin" element={<SuperAdminDashboard />} />
+                  <Route path="/admin/city-admin" element={<AdminDashboard />} />
+                  <Route path="/admin/supervisor" element={<SupervisorDashboard />} />
+
+                  {/* Developer Routes */}
+                  <Route path="/dev/login" element={<DevLoginPage />} />
+                  <Route path="/dev/dashboard" element={<DevDashboard />} />
+
+                  {/* Protected Routes */}
                 <Route
                   path="/dashboard"
                   element={
@@ -466,8 +490,9 @@ const App = () => {
             </BrowserRouter>
           </TooltipProvider>
         </ThemeProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+      </AdminAuthProvider>
+    </AuthProvider>
+  </QueryClientProvider>
   );
 };
 

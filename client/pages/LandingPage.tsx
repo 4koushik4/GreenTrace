@@ -327,6 +327,16 @@ const LandingPage: React.FC = () => {
                   Sign In
                 </Button>
               </Link>
+              <Link to="/admin/login">
+                <Button variant="outline" className="inline-flex border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10">
+                  Staff Portal
+                </Button>
+              </Link>
+              <Link to="/dev/login">
+                <Button variant="outline" className="inline-flex border-green-500/50 text-green-400 hover:bg-green-500/10">
+                  Dev Portal
+                </Button>
+              </Link>
               <Link to="/signup">
                 <Button className="bg-gradient-to-r from-eco-primary to-eco-secondary text-white hover:opacity-90">
                   Get Started

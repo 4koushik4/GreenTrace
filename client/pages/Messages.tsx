@@ -46,19 +46,19 @@ export default function MessagesPage() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMessage.body }),
+        body: JSON.stringify({
+          message: userMessage.body,
+          history: messages.slice(-10), // Send last 10 messages for context
+        }),
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to get response");
-      }
 
       const data = await response.json();
 
+      // Handle both success and error responses that include a reply
       const botMessage: ChatMessage = {
         id: crypto.randomUUID(),
         sender: "bot",
-        body: data.reply || "Sorry, I couldn't process your message.",
+        body: data.reply || data.error || "Sorry, I couldn't process your message.",
         timestamp: new Date(),
       };
 
