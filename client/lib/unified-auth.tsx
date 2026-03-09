@@ -161,7 +161,7 @@ export const UnifiedAuthProvider: React.FC<{ children: React.ReactNode }> = ({
         throw new Error("Supabase is not properly configured");
       }
 
-      await sbSignUpWithEmail(email, password, { full_name: name });
+      await sbSignUpWithEmail(email, password, name);
       // User will be set via the useEffect when sbUser updates
       return true;
     } catch (err: any) {

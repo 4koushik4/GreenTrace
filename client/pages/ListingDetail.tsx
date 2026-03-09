@@ -39,7 +39,7 @@ export default function ListingDetailPage() {
     await createOrder({
       listing_id: item.id,
       buyer_id: user?.id || "mock-user-1",
-      seller_id: item.user_id,
+      seller_id: item.seller_id,
       price: item.price,
     });
     toast({
@@ -59,8 +59,7 @@ export default function ListingDetailPage() {
     await createOffer({
       listing_id: item.id,
       buyer_id: user?.id || "mock-user-1",
-      seller_id: item.user_id,
-      offer_price: price,
+      amount: price,
     });
     toast({
       title: "Offer sent",

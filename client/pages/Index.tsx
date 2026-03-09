@@ -261,7 +261,7 @@ export default function Index() {
       const result = await classifyWaste(file);
       setClassificationResult({
         ...result,
-        pointsEarned: config.defaults.pointsPerClassification[result.type]
+        pointsEarned: config.defaults.pointsPerClassification[result.category as keyof typeof config.defaults.pointsPerClassification] || 10
       });
     } catch (error) {
       console.error("Classification failed:", error);

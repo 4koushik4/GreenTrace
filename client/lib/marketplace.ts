@@ -1,5 +1,8 @@
 import { supabase } from "@/lib/supabase";
 
+export type ListingCategory = "electronics" | "furniture" | "books" | "clothes" | "other";
+export type ListingCondition = "new" | "like-new" | "good" | "fair" | "poor";
+
 export type Listing = {
   id: string;
   seller_id: string;
@@ -42,12 +45,27 @@ export async function createListing(data: {
   return res;
 }
 
-export async function listListings() {
-  const { data, error } = await supabase
+export async function listListings(filters?: {
+  q?: string;
+  category?: string;
+  condition?: string;
+}) {
+  let query = supabase
     .from("marketplace_listings")
     .select("*")
-    .eq("is_active", true)
-    .order("created_at", { ascending: false });
+    .eq("is_active", true);
+
+  if (filters?.category) {
+    query = query.eq("category", filters.category);
+  }
+  if (filters?.condition) {
+    query = query.eq("condition", filters.condition);
+  }
+  if (filters?.q) {
+    query = query.ilike("title", `%${filters.q}%`);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: false });
 
   if (error) throw error;
   return data;

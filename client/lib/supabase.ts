@@ -148,6 +148,7 @@ export interface UserProfile {
   id: string;
   full_name: string;
   email?: string;
+  avatar_url?: string;
   points: number;
   level: string;
   eco_score: number;
@@ -234,7 +235,16 @@ export const useUserProfile = (userId?: string) => {
     };
   }, [userId]);
 
-  return { profile, loading };
+  const updateProfile = async (updates: Partial<UserProfile>) => {
+    if (!supabase || !userId) return;
+    const { error } = await supabase
+      .from("user_profiles")
+      .update(updates)
+      .eq("id", userId);
+    if (error) throw error;
+  };
+
+  return { profile, loading, updateProfile };
 };
 
 

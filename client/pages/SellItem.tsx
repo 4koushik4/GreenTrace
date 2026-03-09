@@ -34,7 +34,7 @@ export default function SellItemPage() {
   const nav = useNavigate();
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<ListingCategory>("electronics");
-  const [condition, setCondition] = useState<ListingCondition>("used");
+  const [condition, setCondition] = useState<ListingCondition>("good");
   const [price, setPrice] = useState<number>(0);
   const [desc, setDesc] = useState("");
   const [images, setImages] = useState<string[]>([]);

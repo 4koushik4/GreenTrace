@@ -81,9 +81,7 @@ export default function SignupPage() {
     
     setIsLoading(true);
     try {
-      await signUpWithEmail(formData.email, formData.password, {
-        full_name: formData.fullName
-      });
+      await signUpWithEmail(formData.email, formData.password, formData.fullName);
       setSignupSuccess(true);
       // Note: Supabase will send a confirmation email
       // User will be redirected after email confirmation
