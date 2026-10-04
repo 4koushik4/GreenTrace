@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -8,25 +8,35 @@ import { MapPin, Navigation, Loader2, Search, ExternalLink, Recycle } from 'luci
 import { useGeolocation, useRecyclingCentersSearch, getDirectionsUrl, Location } from '@/lib/openstreetmap';
 
 const RecyclingCenters: React.FC = () => {
-  const { location, getCurrentLocation, loading: locating } = useGeolocation();
-  const { centers, searchNearbyRecyclingCenters, loading } = useRecyclingCentersSearch();
+  const { location, getCurrentLocation, loading: locating, error: locationError } = useGeolocation();
+  const { centers, searchNearbyRecyclingCenters, loading, error: searchError } = useRecyclingCentersSearch();
   const [querying, setQuerying] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const list = centers.length > 0 ? centers : [];
+  const list = useMemo(() => {
+    const needle = searchText.trim().toLocaleLowerCase();
+    if (!needle) return centers;
+    return centers.filter((center) =>
+      [center.name, center.address, center.amenity, ...(center.recycling_type || [])]
+        .some((value) => value.toLocaleLowerCase().includes(needle))
+    );
+  }, [centers, searchText]);
 
   const handleFindNearby = async () => {
     setQuerying(true);
+    setActionError(null);
     try {
       const loc = await getCurrentLocation();
       await searchNearbyRecyclingCenters(loc, 10);
-    } catch (e) {
-      // noop (mock centers already shown)
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Unable to find nearby recycling centers.');
     } finally {
       setQuerying(false);
     }
   };
 
-  const userLoc: Location | null = location || (list[0] ? { lat: list[0].location.lat, lng: list[0].location.lng } : null);
+  const userLoc: Location | null = location;
 
   // Animation variants
   const containerVariants = {
@@ -90,6 +100,12 @@ const RecyclingCenters: React.FC = () => {
         </Button>
       </motion.div>
 
+      {(actionError || locationError || searchError) && (
+        <div role="alert" className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+          {actionError || locationError || searchError}
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-6">
         <motion.div variants={itemVariants} className="lg:col-span-2">
           <Card className="border-0 bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-sm h-full">
@@ -104,7 +120,16 @@ const RecyclingCenters: React.FC = () => {
             </CardHeader>
             <CardContent>
             <div className="grid sm:grid-cols-2 gap-4">
-              {list.map((c, index) => (
+              {list.length === 0 && (
+                <p className="sm:col-span-2 rounded-md border border-slate-700 p-6 text-center text-gray-400">
+              {loading
+                ? 'Searching live map data for recycling centers…'
+                : centers.length === 0
+                  ? 'No recycling centers have been loaded. Use Find Nearby Centers to search live map data.'
+                  : 'No recycling centers match your search.'}
+                </p>
+              )}
+              {list.map((c) => (
                 <motion.div key={c.id} variants={itemVariants}>
                   <Card className="border-0 bg-gradient-to-br from-slate-700/50 to-slate-800/50 backdrop-blur-sm hover:shadow-xl transition-all duration-300">
                     <CardContent className="p-4">
@@ -165,7 +190,12 @@ const RecyclingCenters: React.FC = () => {
               <div className="space-y-3">
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <Input placeholder="Search by name or material" className="pl-9 bg-slate-700/50 border-slate-600 text-white placeholder-gray-400" />
+                  <Input
+                    value={searchText}
+                    onChange={(event) => setSearchText(event.target.value)}
+                    placeholder="Search by name or material"
+                    className="pl-9 bg-slate-700/50 border-slate-600 text-white placeholder-gray-400"
+                  />
                 </div>
                 <div className="text-sm text-gray-400">
                   💡 Tip: Use the Find Nearby button to auto-locate facilities around you.
@@ -180,4 +210,3 @@ const RecyclingCenters: React.FC = () => {
 };
 
 export default RecyclingCenters;
-

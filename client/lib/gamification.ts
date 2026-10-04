@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect } from "react";
+import { supabase } from "./supabase";
 
 // Core gamification interfaces
 export interface UserProfile {
@@ -11,20 +12,20 @@ export interface UserProfile {
   username: string;
   displayName: string;
   avatar?: string;
-  level: number;
-  experience: number;
+  level: number | string;
+  experience?: number;
   totalPoints: number;
-  ecoCredits: number;
-  rank: number;
+  ecoCredits?: number;
+  rank?: number;
   badges: Badge[];
   achievements: Achievement[];
-  streak: number;
-  joinDate: string;
+  streak?: number;
+  joinDate?: string;
   location?: {
     city: string;
     country: string;
   };
-  preferences: {
+  preferences?: {
     publicProfile: boolean;
     shareAchievements: boolean;
     notifications: boolean;
@@ -34,25 +35,25 @@ export interface UserProfile {
 
 export interface UserStats {
   totalClassifications: number;
-  correctClassifications: number;
-  accuracy: number;
+  correctClassifications?: number;
+  accuracy?: number;
   wasteTypesClassified: Record<string, number>;
-  facilitiesVisited: number;
-  co2Saved: number;
-  energySaved: number;
-  waterSaved: number;
-  treesEquivalent: number;
-  weeklyGoal: number;
-  weeklyProgress: number;
+  facilitiesVisited?: number;
+  co2Saved?: number;
+  energySaved?: number;
+  waterSaved?: number;
+  treesEquivalent?: number;
+  weeklyGoal?: number;
+  weeklyProgress?: number;
   monthlyImpact: MonthlyImpact;
 }
 
 export interface MonthlyImpact {
   classificationsThisMonth: number;
-  co2SavedThisMonth: number;
+  co2SavedThisMonth?: number;
   pointsEarnedThisMonth: number;
-  badgesEarnedThisMonth: number;
-  challengesCompletedThisMonth: number;
+  badgesEarnedThisMonth?: number;
+  challengesCompletedThisMonth?: number;
 }
 
 export interface Badge {
@@ -221,52 +222,152 @@ export const useGamification = (userId?: string) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (userId) {
-      loadUserGamificationData(userId);
-    } else {
-      loadMockData();
-    }
-  }, [userId]);
+    let cancelled = false;
 
-  const loadUserGamificationData = async (userId: string) => {
-    try {
+    const clearData = () => {
+      setUserProfile(null);
+      setBadges([]);
+      setAchievements([]);
+      setChallenges([]);
+      setLeaderboards([]);
+      setEcoCredits([]);
+      setRewards([]);
+      setTeams([]);
+    };
+
+    const loadData = async () => {
+      if (!userId) {
+        clearData();
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      if (!supabase) {
+        clearData();
+        setError("Supabase is not configured.");
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
-      // In real app, fetch from API
-      await loadMockData();
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load gamification data",
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+      setError(null);
+      try {
+        const [profileResult, classificationsResult] = await Promise.all([
+          supabase
+            .from("user_profiles")
+            .select(
+              "id, email, full_name, avatar_url, points, level, joined_date, location, preferences",
+            )
+            .eq("id", userId)
+            .maybeSingle(),
+          supabase
+            .from("waste_classifications")
+            .select("classification, points_earned, created_at")
+            .eq("user_id", userId),
+        ]);
 
-  const loadMockData = async () => {
-    // Mock data for development
-    setUserProfile(mockUserProfile);
-    setBadges(mockBadges);
-    setAchievements(mockAchievements);
-    setChallenges(mockChallenges);
-    setLeaderboards(mockLeaderboards);
-    setEcoCredits(mockEcoCredits);
-    setRewards(mockRewards);
-    setTeams(mockTeams);
-    setLoading(false);
-  };
+        if (profileResult.error) throw profileResult.error;
+        if (classificationsResult.error) throw classificationsResult.error;
+        if (cancelled) return;
+
+        const profile = profileResult.data;
+        const classifications = classificationsResult.data || [];
+        if (!profile) {
+          clearData();
+          return;
+        }
+
+        const wasteTypesClassified = classifications.reduce<
+          Record<string, number>
+        >((counts, item) => {
+          const classification = item.classification || "unknown";
+          counts[classification] = (counts[classification] || 0) + 1;
+          return counts;
+        }, {});
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        const monthlyClassifications = classifications.filter(
+          (item) => new Date(item.created_at) >= monthStart,
+        );
+        const location =
+          profile.location && typeof profile.location === "object"
+            ? profile.location
+            : undefined;
+
+        setUserProfile({
+          id: profile.id,
+          username: profile.email?.split("@")[0] || profile.id,
+          displayName: profile.full_name || profile.email || profile.id,
+          avatar: profile.avatar_url || undefined,
+          level: profile.level || "",
+          totalPoints: profile.points ?? 0,
+          badges: [],
+          achievements: [],
+          joinDate: profile.joined_date || undefined,
+          location:
+            location && (location.city || location.country)
+              ? { city: location.city || "", country: location.country || "" }
+              : undefined,
+          preferences: profile.preferences || undefined,
+          stats: {
+            totalClassifications: classifications.length,
+            wasteTypesClassified,
+            monthlyImpact: {
+              classificationsThisMonth: monthlyClassifications.length,
+              pointsEarnedThisMonth: monthlyClassifications.reduce(
+                (total, item) => total + (item.points_earned || 0),
+                0,
+              ),
+            },
+          },
+        });
+        setBadges([]);
+        setAchievements([]);
+        setChallenges([]);
+        setLeaderboards([]);
+        setEcoCredits([]);
+        setRewards([]);
+        setTeams([]);
+      } catch (err) {
+        if (!cancelled) {
+          clearData();
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load gamification data.",
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   const awardPoints = async (points: number, source: string): Promise<void> => {
     if (!userProfile) return;
 
+    const experience =
+      (userProfile.experience ?? userProfile.totalPoints) + points;
     const newProfile = {
       ...userProfile,
       totalPoints: userProfile.totalPoints + points,
-      experience: userProfile.experience + points,
+      experience,
     };
 
     // Check for level up
-    const newLevel = calculateLevel(newProfile.experience);
-    if (newLevel > userProfile.level) {
+    const newLevel = calculateLevel(experience);
+    const currentLevel =
+      typeof userProfile.level === "number"
+        ? userProfile.level
+        : calculateLevel(userProfile.totalPoints);
+    if (newLevel > currentLevel) {
       newProfile.level = newLevel;
       await triggerLevelUpRewards(newLevel);
     }
@@ -477,297 +578,4 @@ const triggerLevelUpRewards = async (newLevel: number): Promise<void> => {
 const checkForNewBadges = async (profile: UserProfile): Promise<void> => {
   // Check badge requirements against user stats
   console.log("Checking for new badges...");
-};
-
-// Mock data for development
-const mockUserProfile: UserProfile = {
-  id: "user-123",
-  username: "eco_warrior_2024",
-  displayName: "Alex Chen",
-  avatar:
-    "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face",
-  level: 15,
-  experience: 22500,
-  totalPoints: 18750,
-  ecoCredits: 2340,
-  rank: 42,
-  badges: [],
-  achievements: [],
-  streak: 23,
-  joinDate: "2024-01-01T00:00:00Z",
-  location: {
-    city: "San Francisco",
-    country: "USA",
-  },
-  preferences: {
-    publicProfile: true,
-    shareAchievements: true,
-    notifications: true,
-  },
-  stats: {
-    totalClassifications: 1547,
-    correctClassifications: 1465,
-    accuracy: 94.7,
-    wasteTypesClassified: {
-      biodegradable: 623,
-      recyclable: 731,
-      hazardous: 193,
-    },
-    facilitiesVisited: 12,
-    co2Saved: 45.7,
-    energySaved: 234.5,
-    waterSaved: 1250,
-    treesEquivalent: 8.3,
-    weeklyGoal: 50,
-    weeklyProgress: 32,
-    monthlyImpact: {
-      classificationsThisMonth: 234,
-      co2SavedThisMonth: 8.9,
-      pointsEarnedThisMonth: 2850,
-      badgesEarnedThisMonth: 3,
-      challengesCompletedThisMonth: 2,
-    },
-  },
-};
-
-const mockBadges: Badge[] = [
-  {
-    id: "first-sort",
-    name: "First Sort",
-    description: "Classified your first waste item",
-    icon: "🥇",
-    rarity: "common",
-    category: "classification",
-    earnedDate: "2024-01-01T10:00:00Z",
-    requirements: ["Complete 1 classification"],
-    ecoCreditsReward: 10,
-  },
-  {
-    id: "accuracy-master",
-    name: "Accuracy Master",
-    description: "Achieve 95% accuracy over 100 classifications",
-    icon: "🎯",
-    rarity: "epic",
-    category: "classification",
-    earnedDate: "2024-01-10T15:30:00Z",
-    requirements: ["95% accuracy", "100+ classifications"],
-    ecoCreditsReward: 100,
-  },
-  {
-    id: "streak-warrior",
-    name: "Streak Warrior",
-    description: "Maintain a 30-day classification streak",
-    icon: "🔥",
-    rarity: "rare",
-    category: "streak",
-    progress: { current: 23, required: 30 },
-    requirements: ["30-day streak"],
-    ecoCreditsReward: 75,
-  },
-  {
-    id: "eco-champion",
-    name: "Eco Champion",
-    description: "Save 50kg CO₂ through proper waste sorting",
-    icon: "🌱",
-    rarity: "legendary",
-    category: "environment",
-    progress: { current: 45.7, required: 50 },
-    requirements: ["Save 50kg CO₂"],
-    ecoCreditsReward: 200,
-  },
-];
-
-const mockAchievements: Achievement[] = [
-  {
-    id: "achievement-1",
-    name: "Community Leader",
-    description: "Helped 100 users improve their sorting accuracy",
-    icon: "👑",
-    type: "milestone",
-    pointsReward: 1000,
-    ecoCreditsReward: 150,
-    unlockedDate: "2024-01-12T09:00:00Z",
-    shareableUrl: "https://ecosort.app/achievements/community-leader",
-  },
-];
-
-const mockChallenges: Challenge[] = [
-  {
-    id: "challenge-1",
-    name: "January Sorting Sprint",
-    description: "Classify 200 items this month and maintain 90% accuracy",
-    type: "individual",
-    difficulty: "medium",
-    duration: {
-      start: "2024-01-01T00:00:00Z",
-      end: "2024-01-31T23:59:59Z",
-    },
-    requirements: [
-      { type: "classify", target: 200, description: "Classify 200 items" },
-      { type: "accuracy", target: 90, description: "Maintain 90% accuracy" },
-    ],
-    rewards: {
-      points: 2000,
-      ecoCredits: 300,
-      badges: ["challenge-master"],
-    },
-    participants: 1247,
-    status: "active",
-    progress: {
-      current: 156,
-      target: 200,
-      percentage: 78,
-    },
-  },
-  {
-    id: "challenge-2",
-    name: "Team Green Warriors",
-    description: "Work with your team to classify 5000 items collectively",
-    type: "team",
-    difficulty: "hard",
-    duration: {
-      start: "2024-01-15T00:00:00Z",
-      end: "2024-02-15T23:59:59Z",
-    },
-    requirements: [
-      {
-        type: "classify",
-        target: 5000,
-        description: "Team classification goal",
-      },
-    ],
-    rewards: {
-      points: 5000,
-      ecoCredits: 750,
-      badges: ["team-player", "green-warrior"],
-    },
-    participants: 48,
-    status: "active",
-    progress: {
-      current: 2340,
-      target: 5000,
-      percentage: 46.8,
-    },
-  },
-];
-
-const mockLeaderboards: Leaderboard[] = [
-  {
-    id: "global-weekly",
-    name: "Global Weekly Leaderboard",
-    type: "global",
-    timeframe: "weekly",
-    entries: [
-      {
-        rank: 1,
-        userId: "user-456",
-        username: "eco_master",
-        displayName: "Sarah Johnson",
-        avatar:
-          "https://images.unsplash.com/photo-1494790108755-2616b612b786?w=150&h=150&fit=crop&crop=face",
-        score: 1250,
-        change: 2,
-        badges: [],
-        location: "New York, USA",
-        streak: 45,
-        level: 18,
-      },
-      {
-        rank: 2,
-        userId: "user-789",
-        username: "green_guardian",
-        displayName: "Mike Chen",
-        score: 1180,
-        change: -1,
-        badges: [],
-        location: "London, UK",
-        streak: 32,
-        level: 16,
-      },
-    ],
-    lastUpdated: "2024-01-15T12:00:00Z",
-    totalParticipants: 12847,
-  },
-];
-
-const mockEcoCredits: EcoCredit[] = [
-  {
-    id: "eco-1",
-    amount: 25,
-    source: "classification",
-    description: "Classified 5 items with 100% accuracy",
-    earnedDate: "2024-01-15T10:30:00Z",
-    redeemable: true,
-  },
-  {
-    id: "eco-2",
-    amount: 100,
-    source: "achievement",
-    description: "Unlocked Accuracy Master badge",
-    earnedDate: "2024-01-14T16:45:00Z",
-    redeemable: true,
-  },
-];
-
-const mockRewards: Reward[] = [
-  {
-    id: "reward-1",
-    name: "20% Off Eco-Friendly Products",
-    description:
-      "Get 20% discount on sustainable products from our partner stores",
-    type: "discount",
-    cost: 100,
-    category: "sustainable_products",
-    provider: "EcoStore",
-    imageUrl:
-      "https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&h=200&fit=crop",
-    available: true,
-    stock: 50,
-    redemptionInstructions: "Use code ECO20 at checkout",
-    validUntil: "2024-03-31T23:59:59Z",
-  },
-  {
-    id: "reward-2",
-    name: "Plant a Tree Donation",
-    description:
-      "Fund the planting of one tree through our reforestation partner",
-    type: "donation",
-    cost: 250,
-    category: "charity",
-    provider: "TreeFund",
-    imageUrl:
-      "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=300&h=200&fit=crop",
-    available: true,
-    redemptionInstructions:
-      "Tree will be planted and you will receive a certificate",
-  },
-];
-
-const mockTeams: Team[] = [
-  {
-    id: "team-1",
-    name: "Green Office Warriors",
-    description:
-      "Making our workplace more sustainable one classification at a time",
-    type: "organization",
-    memberCount: 25,
-    totalPoints: 45000,
-    rank: 12,
-    createdDate: "2024-01-01T00:00:00Z",
-    isPublic: true,
-    members: [],
-    challenges: [],
-    achievements: [],
-  },
-];
-
-export {
-  mockUserProfile,
-  mockBadges,
-  mockAchievements,
-  mockChallenges,
-  mockLeaderboards,
-  mockEcoCredits,
-  mockRewards,
-  mockTeams,
 };

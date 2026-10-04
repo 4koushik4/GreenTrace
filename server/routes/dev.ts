@@ -1,7 +1,8 @@
 /**
  * Developer API Routes
  * All operations use Supabase service_role key → bypasses RLS entirely.
- * Every request must include a valid dev token in x-dev-token header.
+ * Every request must include a Supabase access token for an active super_admin
+ * in the x-dev-token header.
  */
 import { Router, Request, Response, NextFunction } from "express";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -31,20 +32,43 @@ function getAnonClient(): SupabaseClient | null {
   });
 }
 
-/** Middleware: verify dev session token */
-function devAuth(req: Request, res: Response, next: NextFunction) {
-  const token = req.headers["x-dev-token"] as string;
-  if (!token) {
-    return res.status(401).json({ error: "Dev token required" });
+/** Middleware: verify the Supabase access token and active super_admin role. */
+async function devAuth(req: Request, res: Response, next: NextFunction) {
+  const token = req.headers["x-dev-token"];
+  if (!token || typeof token !== "string") {
+    return res.status(401).json({ error: "Supabase access token required." });
   }
+
+  const authClient = getAnonClient();
+  const adminClient = getServiceClient();
+  if (!authClient || !adminClient) {
+    return res.status(500).json({ error: "Developer API authentication is not configured on the server." });
+  }
+
   try {
-    const decoded = Buffer.from(token, "base64").toString();
-    if (!decoded.startsWith("INDIA:")) {
-      return res.status(403).json({ error: "Invalid dev token" });
+    const { data: authData, error: authError } = await authClient.auth.getUser(token);
+    if (authError || !authData.user) {
+      return res.status(401).json({ error: "Invalid or expired Supabase access token." });
     }
-    next();
+
+    const { data: adminUser, error: adminError } = await adminClient
+      .from("admin_users")
+      .select("role, is_active")
+      .eq("user_id", authData.user.id)
+      .eq("role", "super_admin")
+      .eq("is_active", true)
+      .maybeSingle();
+    if (adminError) {
+      console.error("[Dev API] Failed to verify super_admin access:", adminError.message);
+      return res.status(500).json({ error: "Unable to verify developer authorization." });
+    }
+    if (!adminUser) {
+      return res.status(403).json({ error: "An active super_admin account is required." });
+    }
+
+    return next();
   } catch {
-    return res.status(403).json({ error: "Invalid dev token" });
+    return res.status(401).json({ error: "Invalid or expired Supabase access token." });
   }
 }
 
@@ -57,9 +81,7 @@ router.use(devAuth);
 function getClient(): SupabaseClient {
   const svc = getServiceClient();
   if (svc) return svc;
-  const anon = getAnonClient();
-  if (anon) return anon;
-  throw new Error("Supabase not configured — set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env");
+  throw new Error("Developer API is not configured for service-role access.");
 }
 
 // =====================================================

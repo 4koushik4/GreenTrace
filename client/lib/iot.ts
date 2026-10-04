@@ -1,22 +1,31 @@
+import { supabase } from "@/lib/supabase";
+
 export interface SmartBin {
   id: string;
   location_name: string;
   lat: number;
   lng: number;
-  fill_level: number; // 0-100
+  fill_level: number;
   last_updated: string;
 }
 
-const MOCK_BINS: SmartBin[] = [
-  { id: 'bin-1', location_name: 'Central Park', lat: 40.785, lng: -73.968, fill_level: 35, last_updated: new Date().toISOString() },
-  { id: 'bin-2', location_name: '5th Ave Station', lat: 40.774, lng: -73.965, fill_level: 78, last_updated: new Date().toISOString() },
-  { id: 'bin-3', location_name: 'Eco Mall', lat: 40.762, lng: -73.979, fill_level: 12, last_updated: new Date().toISOString() },
-];
-
 export async function listSmartBins(): Promise<SmartBin[]> {
-  return MOCK_BINS;
+  if (!supabase) {
+    throw new Error("Supabase must be configured to load smart bin data.");
+  }
+
+  const { data, error } = await supabase
+    .from("smart_bins")
+    .select("id, location_name, lat, lng, fill_level, last_updated")
+    .order("last_updated", { ascending: false });
+
+  if (error) {
+    throw new Error(`Unable to load smart bins: ${error.message}`);
+  }
+
+  return (data ?? []) as SmartBin[];
 }
 
 export function getRouteSuggestion(bins: SmartBin[]): SmartBin[] {
-  return [...bins].sort((a,b)=>b.fill_level - a.fill_level);
+  return [...bins].sort((a, b) => b.fill_level - a.fill_level);
 }

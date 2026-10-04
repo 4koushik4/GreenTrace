@@ -25,13 +25,56 @@ CREATE TABLE public.user_profiles (
 );
 
 -- =====================================================
+-- Direct user messages
+-- =====================================================
+CREATE TABLE public.messages (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    pickup_id TEXT,
+    from_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    to_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL CHECK (length(trim(body)) > 0),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_messages_from_user_created
+    ON public.messages(from_user_id, created_at);
+CREATE INDEX idx_messages_to_user_created
+    ON public.messages(to_user_id, created_at);
+
+-- =====================================================
+-- User Locations Table
+-- =====================================================
+CREATE TABLE public.user_locations (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    zone TEXT,
+    region TEXT NOT NULL,
+    ward_number TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id)
+);
+
+-- =====================================================
+-- User QR Codes Table
+-- =====================================================
+CREATE TABLE public.user_qr_codes (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    qr_code TEXT NOT NULL UNIQUE,
+    qr_url TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id)
+);
+
+-- =====================================================
 -- Waste Classifications Table
 -- =====================================================
 CREATE TABLE public.waste_classifications (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE,
     image_url TEXT,
-    classification TEXT CHECK (classification IN ('biodegradable', 'recyclable', 'hazardous')),
+    classification TEXT CHECK (classification IN ('biodegradable', 'recyclable', 'hazardous', 'organic', 'non-recyclable')),
     confidence DECIMAL(5,2),
     points_earned INTEGER DEFAULT 0,
     location JSONB,
@@ -155,6 +198,7 @@ ALTER TABLE public.user_achievements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reward_redemptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_activities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.leaderboard_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
 -- User profiles policies
 CREATE POLICY "Users can view own profile" ON public.user_profiles
@@ -184,9 +228,36 @@ CREATE POLICY "Users can view own redemptions" ON public.reward_redemptions
 CREATE POLICY "Users can insert own redemptions" ON public.reward_redemptions
     FOR INSERT WITH CHECK (auth.uid() = user_id);
 
+CREATE POLICY "Users can update own redemptions" ON public.reward_redemptions
+    FOR UPDATE USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+
 -- User activities policies
 CREATE POLICY "Users can view own activities" ON public.user_activities
     FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can record own activities" ON public.user_activities
+    FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+GRANT SELECT, INSERT ON public.user_activities TO authenticated;
+GRANT SELECT, INSERT ON public.reward_redemptions TO authenticated;
+GRANT UPDATE (status) ON public.reward_redemptions TO authenticated;
+GRANT SELECT ON public.rewards TO anon, authenticated;
+
+-- Messages are visible only to their sender and recipient.
+CREATE POLICY "Users can view their messages" ON public.messages
+    FOR SELECT USING (
+        auth.uid() = from_user_id OR auth.uid() = to_user_id
+    );
+
+CREATE POLICY "Users can send messages as themselves" ON public.messages
+    FOR INSERT WITH CHECK (
+        auth.uid() = from_user_id
+        AND (to_user_id IS NULL OR to_user_id <> auth.uid())
+        AND length(trim(body)) > 0
+    );
+
+GRANT SELECT, INSERT ON public.messages TO authenticated;
 
 -- Public read access for certain tables
 CREATE POLICY "Anyone can view achievements" ON public.achievements
@@ -270,6 +341,79 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Redeem a reward atomically, including point deduction and finite stock.
+CREATE OR REPLACE FUNCTION public.redeem_reward(
+    reward_id_input UUID,
+    redemption_code_input TEXT
+)
+RETURNS public.reward_redemptions
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    reward_row public.rewards%ROWTYPE;
+    redemption_row public.reward_redemptions%ROWTYPE;
+    available_points INTEGER;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'Authentication is required to redeem rewards';
+    END IF;
+
+    SELECT * INTO reward_row
+    FROM public.rewards
+    WHERE id = reward_id_input
+    FOR UPDATE;
+
+    IF NOT FOUND OR NOT reward_row.available THEN
+        RAISE EXCEPTION 'Reward is unavailable';
+    END IF;
+    IF reward_row.cost_in_points IS NULL OR reward_row.cost_in_points <= 0 THEN
+        RAISE EXCEPTION 'Reward does not have a valid points cost';
+    END IF;
+    IF reward_row.stock IS NOT NULL AND reward_row.stock <= 0 THEN
+        RAISE EXCEPTION 'Reward is out of stock';
+    END IF;
+
+    SELECT points INTO available_points
+    FROM public.user_profiles
+    WHERE id = auth.uid()
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'User profile not found';
+    END IF;
+    IF available_points < reward_row.cost_in_points THEN
+        RAISE EXCEPTION 'Insufficient points';
+    END IF;
+
+    INSERT INTO public.reward_redemptions (
+        user_id, reward_id, points_used, status, redemption_code
+    )
+    VALUES (
+        auth.uid(), reward_row.id, reward_row.cost_in_points, 'pending',
+        redemption_code_input
+    )
+    RETURNING * INTO redemption_row;
+
+    UPDATE public.user_profiles
+    SET points = points - reward_row.cost_in_points,
+        updated_at = NOW()
+    WHERE id = auth.uid();
+
+    IF reward_row.stock IS NOT NULL THEN
+        UPDATE public.rewards
+        SET stock = stock - 1,
+            available = CASE WHEN stock <= 1 THEN FALSE ELSE available END
+        WHERE id = reward_row.id;
+    END IF;
+
+    RETURN redemption_row;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.redeem_reward(UUID, TEXT) TO authenticated;
+
 -- Function to calculate leaderboard rankings
 CREATE OR REPLACE FUNCTION public.update_leaderboards()
 RETURNS VOID AS $$
@@ -327,29 +471,3 @@ INSERT INTO public.rewards (name, description, type, cost_in_points, category, p
 ('Reusable Water Bottle', 'Premium stainless steel water bottle', 'product', 500, 'sustainable_products', 'EcoGoods', true),
 ('Eco Workshop Access', 'Free access to sustainability workshop', 'service', 300, 'education', 'GreenLearn', true),
 ('Carbon Offset Credits', 'Offset 1 ton of CO2 emissions', 'donation', 1000, 'environment', 'CarbonNeutral', true);
-
--- =====================================================
--- User Locations Table
--- =====================================================
-CREATE TABLE public.user_locations (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE,
-    zone TEXT,
-    region TEXT NOT NULL,
-    ward_number TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(user_id) -- One location per user
-);
-
--- =====================================================
--- User QR Codes Table
--- =====================================================
-CREATE TABLE public.user_qr_codes (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE,
-    qr_code TEXT NOT NULL UNIQUE,
-    qr_url TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(user_id) -- One QR code per user
-);

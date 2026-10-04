@@ -22,12 +22,20 @@ const supabase = createClient(
 );
 ```
 
-### Environment Variables (Already Set)
+### Environment Variables
 
 ```
-VITE_SUPABASE_URL=https://lmmvawkrkbxpfvkktcso.supabase.co
-VITE_SUPABASE_ANON_KEY=sb_publishable_HweyeDjpAfFIIm7pWtiumg_mjiW-zBS
+VITE_SUPABASE_URL=<your Supabase project URL>
+VITE_SUPABASE_ANON_KEY=<your Supabase publishable/anon key>
+SUPABASE_SERVICE_ROLE_KEY=<server-only service role key>
+VITE_API_BASE_URL=https://greentrace-wbqx.onrender.com
 ```
+
+`VITE_API_BASE_URL` defaults to the hosted classification service above. The scan and assessment pages send image uploads to its `/predict` endpoint as multipart form data and accept the backend's `class_name` and percentage `confidence` response. Set `VITE_API_BASE_URL` only when switching to another compatible backend.
+
+Configure `ROBOFLOW_API_KEY` in the backend hosting environment for the Flask prediction service. `ROBOFLOW_MODEL` is optional and defaults to `waste-classifier-louut/1`. Keep provider and service-role keys server-side and out of browser-prefixed variables. Classification reports backend/model errors directly; it does not generate demo predictions.
+
+Run `database-schema.sql` first, then `database-schema-roles.sql`, in the Supabase SQL editor to create the app tables, RLS policies, direct-message storage, and live smart-bin table. Smart-bin readings must be supplied by a real device or ingestion service; the app does not seed sample readings.
 
 ---
 
@@ -269,27 +277,7 @@ export async function createListing(input: ListingInput): Promise<Listing> {
 
 **How it works:**
 
-```typescript
-// Send message to worker
-const message = await sendMessage({
-  pickup_id: pickupId, // Associated with pickup
-  from_user_id: user?.id || "mock-user-1",
-  to_user_id: "worker-bot",
-  body: "When can you pick up my items?",
-});
-
-// Groq API provides AI response
-const reply = await getAIReply(content, context);
-// Now uses Groq instead of OpenAI
-
-// Auto-reply saved back to messages table
-await sendMessage({
-  pickup_id: pickupId,
-  from_user_id: "worker-bot",
-  to_user_id: user?.id,
-  body: reply, // AI-generated response
-});
-```
+Messages are stored in the `messages` table and restricted by RLS to the authenticated sender and recipient. The conversation uses the signed-in user and actual listing/pickup participant IDs; no mock identity or synthetic bot reply is used. Missing schema or service errors are surfaced to the user.
 
 **Message Thread:**
 
@@ -309,9 +297,9 @@ ORDER BY created_at ASC;
 
 ## 🔄 Data Synchronization
 
-### Local Storage Fallback
+### Offline behavior
 
-All features use this pattern:
+Some services retain a local offline fallback when Supabase is not configured. Authenticated messaging, classification history, rewards, and dashboard data require Supabase and show an error or empty state rather than treating local demo data as live records.
 
 ```typescript
 const readLocal = (): Item[] => {
@@ -591,7 +579,7 @@ export function DebugDatabase() {
 ## 🚀 Deployment Checklist
 
 - [ ] SQL schema deployed to Supabase
-- [ ] All 12 tables created and verified
+- [ ] Required tables created and verified, including `messages` and `smart_bins`
 - [ ] RLS policies active
 - [ ] Environment variables set
 - [ ] Test queries run successfully

@@ -4,6 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { maps as mapsConfig } from "./config";
+import { supabase } from "./supabase";
 
 // Location and map types
 export interface Location {
@@ -74,11 +75,11 @@ export interface WasteType {
 }
 
 export interface AccessibilityFeatures {
-  wheelchairAccessible: boolean;
-  brailleSignage: boolean;
-  audioInstructions: boolean;
-  lowCounterHeight: boolean;
-  visualAids: boolean;
+  wheelchairAccessible?: boolean;
+  brailleSignage?: boolean;
+  audioInstructions?: boolean;
+  lowCounterHeight?: boolean;
+  visualAids?: boolean;
 }
 
 export interface PricingInfo {
@@ -92,8 +93,8 @@ export interface RouteOptimization {
   distance: number;
   duration: number;
   steps: RouteStep[];
-  trafficConditions: "light" | "moderate" | "heavy";
-  carbonFootprint: number;
+  trafficConditions?: "light" | "moderate" | "heavy";
+  carbonFootprint?: number;
   alternativeRoutes: AlternativeRoute[];
 }
 
@@ -482,11 +483,6 @@ const extractRecyclingTypes = (tags: any): string[] => {
     }
   });
 
-  // If no specific types found, add common ones
-  if (types.length === 0) {
-    types.push("general recycling");
-  }
-
   return types;
 };
 
@@ -518,8 +514,10 @@ export const getStaticMapUrl = (
 
     url += `${center.lng},${center.lat},${zoom}/${width}x${height}@2x?access_token=${mapsConfig.mapboxToken}`;
   } else {
-    // Fallback to a basic static map service
-    url = `https://www.mapquestapi.com/staticmap/v5/map?key=demo&center=${center.lat},${center.lng}&zoom=${zoom}&size=${width},${height}&type=map&format=jpg`;
+    const markerParams = markers
+      .map((marker) => `&markers=${marker.lat},${marker.lng},red-pushpin`)
+      .join("");
+    url = `https://staticmap.openstreetmap.de/staticmap.php?center=${center.lat},${center.lng}&zoom=${zoom}&size=${width}x${height}${markerParams}`;
   }
 
   return url;
@@ -527,61 +525,23 @@ export const getStaticMapUrl = (
 
 // Enhanced utility functions for facility management
 const enrichFacilityData = async (
-  facilityId: string,
+  _facilityId: string,
   tags: any,
 ): Promise<Partial<RecyclingFacility>> => {
-  // Simulate enriching facility data with additional information
-  const mockData = {
-    rating: 3.5 + Math.random() * 1.5,
-    reviews: generateMockReviews(),
-    capacity: {
-      current: Math.floor(Math.random() * 80),
-      maximum: 100,
-      lastUpdated: new Date().toISOString(),
-    },
+  return {
     specialServices: getSpecialServices(tags),
     acceptedWasteTypes: getAcceptedWasteTypes(tags),
-    operationalStatus: getOperationalStatus(),
-    estimatedWaitTime: Math.floor(Math.random() * 30),
     facilities: getFacilities(tags),
     accessibility: getAccessibilityFeatures(tags),
-    pricing: getPricingInfo(tags),
-    certifications: getCertifications(),
-    lastVerified: new Date(
-      Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000,
-    ).toISOString(),
   };
-
-  return mockData;
-};
-
-const generateMockReviews = (): FacilityReview[] => {
-  const reviewCount = Math.floor(Math.random() * 10) + 1;
-  const reviews: FacilityReview[] = [];
-
-  for (let i = 0; i < reviewCount; i++) {
-    reviews.push({
-      id: `review-${i}`,
-      userId: `user-${i}`,
-      userName: `User${i}`,
-      rating: Math.floor(Math.random() * 5) + 1,
-      comment: `Great facility with helpful staff and clean environment.`,
-      date: new Date(
-        Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000,
-      ).toISOString(),
-      helpful: Math.floor(Math.random() * 20),
-    });
-  }
-
-  return reviews;
 };
 
 const getSpecialServices = (tags: any): string[] => {
   const services = [];
-  if (tags["service:electronics"]) services.push("Electronics recycling");
-  if (tags["service:pickup"]) services.push("Pickup service");
-  if (tags["service:sorting"]) services.push("Sorting assistance");
-  if (tags["service:education"]) services.push("Educational tours");
+  if (tags["service:electronics"] === "yes") services.push("Electronics recycling");
+  if (tags["service:pickup"] === "yes") services.push("Pickup service");
+  if (tags["service:sorting"] === "yes") services.push("Sorting assistance");
+  if (tags["service:education"] === "yes") services.push("Educational tours");
   return services;
 };
 
@@ -591,84 +551,50 @@ const getAcceptedWasteTypes = (tags: any): WasteType[] => {
   if (tags["recycling:plastic"] === "yes") {
     types.push({
       type: "plastic",
-      subtypes: ["PET", "HDPE", "PVC", "LDPE"],
-      restrictions: ["Clean containers only"],
-      processingFee: 0,
     });
   }
 
   if (tags["recycling:glass"] === "yes") {
     types.push({
       type: "glass",
-      subtypes: ["Clear glass", "Brown glass", "Green glass"],
-      restrictions: ["No broken glass"],
-      processingFee: 0,
     });
   }
 
   if (tags["recycling:metal"] === "yes") {
     types.push({
       type: "metal",
-      subtypes: ["Aluminum cans", "Steel cans", "Copper"],
-      restrictions: ["No paint cans"],
-      processingFee: 0,
     });
   }
 
   return types;
 };
 
-const getOperationalStatus = (): "open" | "closed" | "maintenance" | "full" => {
-  const statuses = [
-    "open",
-    "open",
-    "open",
-    "closed",
-    "maintenance",
-    "full",
-  ] as const;
-  return statuses[Math.floor(Math.random() * statuses.length)];
-};
-
 const getFacilities = (tags: any): string[] => {
   const facilities = [];
-  if (tags["amenity:parking"]) facilities.push("Parking available");
-  if (tags["amenity:toilet"]) facilities.push("Restrooms");
-  if (tags["amenity:cafe"]) facilities.push("Café");
-  facilities.push("Information desk", "Weighing station");
+  if (tags["parking"] === "yes") facilities.push("Parking available");
+  if (tags["toilets"] === "yes") facilities.push("Restrooms");
+  if (tags["cafe"] === "yes") facilities.push("Café");
   return facilities;
 };
 
-const getAccessibilityFeatures = (tags: any): AccessibilityFeatures => {
-  return {
-    wheelchairAccessible: tags["wheelchair"] === "yes" || Math.random() > 0.3,
-    brailleSignage: Math.random() > 0.7,
-    audioInstructions: Math.random() > 0.8,
-    lowCounterHeight: Math.random() > 0.5,
-    visualAids: Math.random() > 0.6,
-  };
-};
-
-const getPricingInfo = (tags: any): PricingInfo => {
-  return {
-    freeTypes: ["paper", "cardboard", "glass", "metal"],
-    paidTypes: [
-      { type: "electronics", price: 5.0, unit: "per item" },
-      { type: "hazardous", price: 2.5, unit: "per kg" },
-    ],
-    membershipDiscount: 0.1,
-    bulkDiscount: 0.15,
-  };
-};
-
-const getCertifications = (): string[] => {
-  const allCerts = [
-    "ISO 14001",
-    "LEED Certified",
-    "EPA Approved",
-    "State Certified",
-  ];
-  return allCerts.filter(() => Math.random() > 0.5);
+const getAccessibilityFeatures = (tags: any): AccessibilityFeatures | undefined => {
+  const features: AccessibilityFeatures = {};
+  if (tags["wheelchair"] === "yes" || tags["wheelchair"] === "no") {
+    features.wheelchairAccessible = tags["wheelchair"] === "yes";
+  }
+  if (tags["braille"] === "yes" || tags["braille"] === "no") {
+    features.brailleSignage = tags["braille"] === "yes";
+  }
+  if (tags["audio"] === "yes" || tags["audio"] === "no") {
+    features.audioInstructions = tags["audio"] === "yes";
+  }
+  if (tags["low_counter"] === "yes" || tags["low_counter"] === "no") {
+    features.lowCounterHeight = tags["low_counter"] === "yes";
+  }
+  if (tags["visual_aids"] === "yes" || tags["visual_aids"] === "no") {
+    features.visualAids = tags["visual_aids"] === "yes";
+  }
+  return Object.keys(features).length > 0 ? features : undefined;
 };
 
 const applyFilters = (
@@ -700,7 +626,7 @@ const applyFilters = (
     if (filters.freeOnly) {
       const hasPaidTypes =
         facility.pricing?.paidTypes && facility.pricing.paidTypes.length > 0;
-      if (hasPaidTypes) return false;
+      if (!facility.pricing || hasPaidTypes) return false;
     }
 
     // Minimum rating filter
@@ -734,262 +660,90 @@ const calculateOptimizedRoute = async (
   destination: Location,
   mode: "driving" | "walking" | "cycling" | "public",
 ): Promise<RouteOptimization> => {
-  // Mock route optimization - in real app, use routing APIs like OSRM or GraphHopper
-  const distance = calculateDistance(start, destination);
-  const baseSpeed = {
-    driving: 50, // km/h
-    cycling: 20,
-    walking: 5,
-    public: 25,
-  };
+  if (mode === "public") {
+    throw new Error("Public transit routing is not available from the configured map service.");
+  }
 
-  const duration = (distance / baseSpeed[mode]) * 60; // minutes
-  const carbonFootprint = mode === "driving" ? distance * 0.2 : 0; // kg CO2
+  const profile = {
+    driving: "routed-car",
+    cycling: "routed-bike",
+    walking: "routed-foot",
+  }[mode];
+  const coordinates = `${start.lng},${start.lat};${destination.lng},${destination.lat}`;
+  const url = `https://routing.openstreetmap.de/${profile}/route/v1/driving/${coordinates}?overview=full&steps=true&alternatives=true&geometries=geojson`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Route service request failed: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  const primaryRoute = result.routes?.[0];
+  if (!primaryRoute || !Array.isArray(primaryRoute.legs)) {
+    throw new Error("Route service returned no usable route.");
+  }
+
+  const steps: RouteStep[] = primaryRoute.legs.flatMap((leg: any) =>
+    (leg.steps ?? []).map((step: any) => {
+      const maneuver = step.maneuver ?? {};
+      const instruction = [maneuver.type, maneuver.modifier, step.name]
+        .filter(Boolean)
+        .join(" ");
+      const coordinates = step.geometry?.coordinates ?? [];
+      return {
+        instruction: instruction || "Continue",
+        distance: Number(step.distance ?? 0) / 1000,
+        duration: Number(step.duration ?? 0) / 60,
+        coordinates: coordinates.map(([lng, lat]: [number, number]) => ({
+          lat,
+          lng,
+        })),
+        maneuver: maneuver.type ?? "continue",
+      };
+    }),
+  );
+
+  const alternatives: AlternativeRoute[] = (result.routes ?? [])
+    .slice(1)
+    .map((route: any, index: number) => ({
+      name: `Alternative route ${index + 1}`,
+      distance: Number(route.distance) / 1000,
+      duration: Number(route.duration) / 60,
+      description: "Alternative route from OpenStreetMap routing.",
+    }));
 
   return {
-    distance,
-    duration,
-    steps: generateRouteSteps(start, destination),
-    trafficConditions: "moderate",
-    carbonFootprint,
-    alternativeRoutes: generateAlternativeRoutes(start, destination),
+    distance: Number(primaryRoute.distance) / 1000,
+    duration: Number(primaryRoute.duration) / 60,
+    steps,
+    alternativeRoutes: alternatives,
   };
-};
-
-const generateRouteSteps = (
-  start: Location,
-  destination: Location,
-): RouteStep[] => {
-  return [
-    {
-      instruction: "Head north on Main Street",
-      distance: 0.5,
-      duration: 2,
-      coordinates: [start],
-      maneuver: "depart",
-    },
-    {
-      instruction: "Turn right onto Eco Avenue",
-      distance: 1.2,
-      duration: 5,
-      coordinates: [{ lat: start.lat + 0.01, lng: start.lng + 0.01 }],
-      maneuver: "turn-right",
-    },
-    {
-      instruction: "Arrive at destination",
-      distance: 0,
-      duration: 0,
-      coordinates: [destination],
-      maneuver: "arrive",
-    },
-  ];
-};
-
-const generateAlternativeRoutes = (
-  start: Location,
-  destination: Location,
-): AlternativeRoute[] => {
-  return [
-    {
-      name: "Scenic Route",
-      distance: calculateDistance(start, destination) * 1.15,
-      duration: 25,
-      description: "Longer but more scenic route through the park",
-    },
-    {
-      name: "Highway Route",
-      distance: calculateDistance(start, destination) * 0.95,
-      duration: 18,
-      description: "Faster route using main highways",
-    },
-  ];
 };
 
 const getRealTimeCapacity = async (
   facilityId: string,
 ): Promise<{ available: boolean; waitTime: number }> => {
-  // Mock real-time capacity data
-  const currentCapacity = Math.floor(Math.random() * 100);
-  return {
-    available: currentCapacity < 80,
-    waitTime: currentCapacity > 80 ? Math.floor(Math.random() * 45) : 0,
-  };
+  throw new Error(`Live capacity data is not available for facility ${facilityId}.`);
 };
 
 const submitFacilityReport = async (
   facilityId: string,
   issue: string,
 ): Promise<void> => {
-  // Mock facility reporting
-  console.log(`Report submitted for facility ${facilityId}: ${issue}`);
-  // In real app, send to backend API
-};
+  if (!supabase) {
+    throw new Error("Supabase must be configured to submit a facility report.");
+  }
 
-// Mock data for development when APIs are not available
-export const mockRecyclingCenters: RecyclingFacility[] = [
-  {
-    id: "mock-1",
-    name: "Green Recycling Hub",
-    address: "123 Eco Street, Green City, 12345",
-    location: { lat: 40.7128, lng: -74.006 },
-    amenity: "recycling",
-    recycling_type: ["plastic", "glass", "metal", "paper"],
-    opening_hours: "Mo-Fr 08:00-18:00; Sa 09:00-16:00",
-    phone: "+1 234 567 8900",
-    website: "https://greenrecyclinghub.com",
-    distance: 0.8,
-    rating: 4.7,
-    reviews: [
-      {
-        id: "review-1",
-        userId: "user-1",
-        userName: "Sarah M.",
-        rating: 5,
-        comment: "Excellent facility with very helpful staff!",
-        date: "2024-01-10T10:00:00Z",
-        helpful: 15,
-      },
-    ],
-    capacity: {
-      current: 45,
-      maximum: 100,
-      lastUpdated: "2024-01-15T14:30:00Z",
-    },
-    specialServices: ["Pickup service", "Educational tours"],
-    acceptedWasteTypes: [
-      {
-        type: "plastic",
-        subtypes: ["PET", "HDPE"],
-        restrictions: ["Clean only"],
-        processingFee: 0,
-      },
-      {
-        type: "glass",
-        subtypes: ["Clear", "Brown"],
-        restrictions: [],
-        processingFee: 0,
-      },
-    ],
-    operationalStatus: "open",
-    estimatedWaitTime: 5,
-    facilities: ["Parking available", "Restrooms", "Information desk"],
-    accessibility: {
-      wheelchairAccessible: true,
-      brailleSignage: true,
-      audioInstructions: false,
-      lowCounterHeight: true,
-      visualAids: true,
-    },
-    pricing: {
-      freeTypes: ["plastic", "glass", "metal", "paper"],
-      paidTypes: [{ type: "electronics", price: 5.0, unit: "per item" }],
-      membershipDiscount: 0.1,
-    },
-    certifications: ["ISO 14001", "EPA Approved"],
-    lastVerified: "2024-01-14T00:00:00Z",
-  },
-  {
-    id: "mock-2",
-    name: "EcoCenter Downtown",
-    address: "456 Central Ave, Downtown, 12345",
-    location: { lat: 40.7589, lng: -73.9851 },
-    amenity: "waste_disposal",
-    recycling_type: ["electronics", "batteries", "hazardous"],
-    opening_hours: "Mo-Fr 09:00-17:00",
-    phone: "+1 234 567 8901",
-    distance: 1.2,
-    rating: 4.2,
-    reviews: [],
-    capacity: {
-      current: 78,
-      maximum: 100,
-      lastUpdated: "2024-01-15T15:00:00Z",
-    },
-    specialServices: ["Electronics recycling", "Hazardous waste disposal"],
-    acceptedWasteTypes: [
-      {
-        type: "electronic",
-        subtypes: ["Phones", "Computers"],
-        restrictions: ["Data wiped"],
-        processingFee: 2.5,
-      },
-      {
-        type: "hazardous",
-        subtypes: ["Batteries", "Chemicals"],
-        restrictions: ["Sealed containers"],
-        processingFee: 5.0,
-      },
-    ],
-    operationalStatus: "open",
-    estimatedWaitTime: 15,
-    facilities: ["Parking available", "Secure disposal"],
-    accessibility: {
-      wheelchairAccessible: true,
-      brailleSignage: false,
-      audioInstructions: true,
-      lowCounterHeight: false,
-      visualAids: true,
-    },
-    pricing: {
-      freeTypes: [],
-      paidTypes: [
-        { type: "electronics", price: 2.5, unit: "per kg" },
-        { type: "hazardous", price: 5.0, unit: "per item" },
-      ],
-    },
-    certifications: ["State Certified", "EPA Approved"],
-    lastVerified: "2024-01-13T00:00:00Z",
-  },
-  {
-    id: "mock-3",
-    name: "Community Compost Site",
-    address: "789 Garden Road, Suburbs, 12345",
-    location: { lat: 40.6892, lng: -74.0445 },
-    amenity: "recycling",
-    recycling_type: ["organic", "compost"],
-    opening_hours: "24/7",
-    distance: 2.1,
-    rating: 4.5,
-    reviews: [
-      {
-        id: "review-2",
-        userId: "user-2",
-        userName: "Mike T.",
-        rating: 4,
-        comment: "Great for composting, always clean and well-maintained.",
-        date: "2024-01-12T16:20:00Z",
-        helpful: 8,
-      },
-    ],
-    capacity: {
-      current: 32,
-      maximum: 100,
-      lastUpdated: "2024-01-15T12:00:00Z",
-    },
-    specialServices: ["Composting education", "Free compost pickup"],
-    acceptedWasteTypes: [
-      {
-        type: "biodegradable",
-        subtypes: ["Food scraps", "Garden waste"],
-        restrictions: ["No meat/dairy"],
-        processingFee: 0,
-      },
-    ],
-    operationalStatus: "open",
-    estimatedWaitTime: 0,
-    facilities: ["24/7 access", "Tool lending"],
-    accessibility: {
-      wheelchairAccessible: false,
-      brailleSignage: false,
-      audioInstructions: false,
-      lowCounterHeight: false,
-      visualAids: false,
-    },
-    pricing: {
-      freeTypes: ["organic", "compost"],
-      paidTypes: [],
-    },
-    certifications: ["Organic Certified"],
-    lastVerified: "2024-01-15T00:00:00Z",
-  },
-];
+  const { data, error: authError } = await supabase.auth.getUser();
+  if (authError) throw authError;
+  if (!data.user) {
+    throw new Error("Sign in to submit a facility report.");
+  }
+
+  const { error } = await supabase.from("waste_reports").insert({
+    citizen_id: data.user.id,
+    title: "Recycling facility issue",
+    description: `Facility ${facilityId}: ${issue}`,
+    category: "other",
+  });
+  if (error) throw error;
+};

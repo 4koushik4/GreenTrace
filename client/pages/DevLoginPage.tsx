@@ -1,19 +1,15 @@
 /**
  * Developer Login Page
- * Hardcoded credentials — Username: INDIA, Password: BHARAT
- * Bypasses Supabase auth entirely.
+ * Developer access is restricted to active super_admin accounts.
  */
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Shield, Terminal, Eye, EyeOff, AlertCircle } from "lucide-react";
 
-const DEV_USERNAME = "INDIA";
-const DEV_PASSWORD = "BHARAT";
-
 export default function DevLoginPage() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
@@ -24,23 +20,33 @@ export default function DevLoginPage() {
     setError("");
     setLoading(true);
 
-    // Simulate brief delay for UX
-    await new Promise((r) => setTimeout(r, 400));
+    try {
+      const response = await fetch("/api/dev/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "Developer authentication failed.");
+      }
+      if (!result.token) {
+        throw new Error("Authentication succeeded without an access token.");
+      }
 
-    if (username === DEV_USERNAME && password === DEV_PASSWORD) {
       const session = {
         role: "developer",
-        username: DEV_USERNAME,
+        username: result.username || email,
         loginTime: new Date().toISOString(),
-        token: btoa(`${DEV_USERNAME}:${Date.now()}`),
+        token: result.token,
       };
       localStorage.setItem("dev_session", JSON.stringify(session));
       navigate("/dev/dashboard");
-    } else {
-      setError("Invalid credentials. Access denied.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Developer authentication failed.");
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
@@ -84,16 +90,16 @@ export default function DevLoginPage() {
           </div>
 
           <form onSubmit={handleLogin} className="space-y-5">
-            {/* Username */}
+            {/* Email */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Username
+                Email
               </label>
               <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value.toUpperCase())}
-                placeholder="Enter username"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter email"
                 className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 font-mono tracking-wider transition-colors"
                 required
                 autoFocus
@@ -109,7 +115,7 @@ export default function DevLoginPage() {
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value.toUpperCase())}
+                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter password"
                   className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 font-mono tracking-wider transition-colors"
                   required

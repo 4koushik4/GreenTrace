@@ -182,6 +182,63 @@ AS $$
 $$;
 
 -- =====================================================
+-- Smart bins — live IoT readings supplied by deployed devices
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.smart_bins (
+    id TEXT PRIMARY KEY,
+    location_name TEXT NOT NULL,
+    lat DOUBLE PRECISION NOT NULL CHECK (lat BETWEEN -90 AND 90),
+    lng DOUBLE PRECISION NOT NULL CHECK (lng BETWEEN -180 AND 180),
+    fill_level INTEGER NOT NULL CHECK (fill_level BETWEEN 0 AND 100),
+    last_updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.smart_bins ENABLE ROW LEVEL SECURITY;
+
+-- Re-running this schema refreshes only policies managed by this file.
+DO $$
+DECLARE
+    existing_policy RECORD;
+BEGIN
+    FOR existing_policy IN
+        SELECT schemaname, tablename, policyname
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND (
+              (tablename = 'smart_bins' AND policyname LIKE 'smart_bins\_%' ESCAPE '\')
+              OR (tablename = 'states' AND policyname LIKE 'states\_%' ESCAPE '\')
+              OR (tablename = 'cities' AND policyname LIKE 'cities\_%' ESCAPE '\')
+              OR (tablename = 'wards' AND policyname LIKE 'wards\_%' ESCAPE '\')
+              OR (tablename = 'admin_users' AND policyname LIKE 'admin_users\_%' ESCAPE '\')
+              OR (tablename = 'waste_reports' AND policyname LIKE 'waste_reports\_%' ESCAPE '\')
+              OR (tablename = 'waste_collection_logs' AND policyname LIKE 'collection_logs\_%' ESCAPE '\')
+              OR (tablename = 'ward_segregation_stats' AND policyname LIKE 'ward_stats\_%' ESCAPE '\')
+          )
+    LOOP
+        EXECUTE format(
+            'DROP POLICY IF EXISTS %I ON %I.%I',
+            existing_policy.policyname,
+            existing_policy.schemaname,
+            existing_policy.tablename
+        );
+    END LOOP;
+END;
+$$;
+
+CREATE POLICY "smart_bins_public_read"
+    ON public.smart_bins FOR SELECT
+    USING (true);
+
+CREATE POLICY "smart_bins_admin_manage"
+    ON public.smart_bins FOR ALL
+    USING (public.get_my_admin_role() IN ('admin', 'super_admin'))
+    WITH CHECK (public.get_my_admin_role() IN ('admin', 'super_admin'));
+
+GRANT SELECT ON public.smart_bins TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.smart_bins TO authenticated;
+GRANT ALL ON public.smart_bins TO service_role;
+
+-- =====================================================
 -- Auto-update updated_at trigger
 -- =====================================================
 CREATE OR REPLACE FUNCTION public.set_updated_at()
@@ -194,10 +251,12 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_admin_users_updated_at ON public.admin_users;
 CREATE TRIGGER trg_admin_users_updated_at
     BEFORE UPDATE ON public.admin_users
     FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+DROP TRIGGER IF EXISTS trg_waste_reports_updated_at ON public.waste_reports;
 CREATE TRIGGER trg_waste_reports_updated_at
     BEFORE UPDATE ON public.waste_reports
     FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -807,10 +866,11 @@ ON CONFLICT DO NOTHING;
 --  │ states                    │   1    │   1    │   1    │   1    │
 --  │ cities                    │   1    │   1    │   1    │   1    │
 --  │ wards                     │   1    │   1    │   1    │   1    │
+--  │ smart_bins                │   2    │   1    │   1    │   1    │
 --  │ admin_users               │   4    │   3    │   3    │   2    │
 --  │ waste_reports             │   4    │   2    │   4    │   2    │
 --  │ waste_collection_logs     │   3    │   3    │   2    │   1    │
 --  │ ward_segregation_stats    │   3    │   2    │   2    │   1    │
 --  └───────────────────────────┴────────┴────────┴────────┴────────┘
---  Total: 53 RLS policies
+--  Total: 55 RLS policies
 --

@@ -9,8 +9,53 @@ import {
   VoucherRedemption,
   UserTransaction,
   generateVoucherCode,
-  canRedeemVoucher,
 } from "./vouchers";
+
+const mapReward = (reward: any): Voucher => ({
+  id: reward.id,
+  category: reward.category || "uncategorized",
+  brand: reward.provider,
+  title: reward.name,
+  description: reward.description,
+  pointsRequired: reward.cost_in_points,
+  originalValue: null,
+  discountType: reward.type,
+  discountValue: null,
+  image: reward.image_url,
+  logo: null,
+  color: null,
+  validityDays: null,
+  validUntil: reward.valid_until,
+  termsAndConditions: [],
+  isActive: reward.available,
+  stockLimit: reward.stock,
+  currentStock: reward.stock,
+});
+
+const mapRedemption = (redemption: any): VoucherRedemption => {
+  const reward = Array.isArray(redemption.reward)
+    ? redemption.reward[0]
+    : redemption.reward;
+  const hasExpired =
+    reward?.valid_until && new Date(reward.valid_until).getTime() < Date.now();
+  return {
+    id: redemption.id,
+    userId: redemption.user_id,
+    voucherId: redemption.reward_id,
+    voucherCode: redemption.redemption_code || "",
+    pointsUsed: redemption.points_used ?? 0,
+    status: hasExpired
+      ? "expired"
+      : redemption.status === "completed"
+        ? "used"
+        : redemption.status === "cancelled"
+          ? "expired"
+          : "active",
+    redeemedAt: redemption.redeemed_at,
+    expiresAt: reward?.valid_until || null,
+    voucher: reward ? mapReward(reward) : undefined,
+  };
+};
 
 // Error types for better error handling
 export class InsufficientPointsError extends Error {
@@ -37,7 +82,7 @@ export class VoucherOutOfStockError extends Error {
 }
 
 /**
- * Fetch all available vouchers from Supabase
+ * Fetch the reward catalog from Supabase
  */
 export const fetchVouchers = async (): Promise<Voucher[]> => {
   if (!supabase) {
@@ -45,33 +90,15 @@ export const fetchVouchers = async (): Promise<Voucher[]> => {
   }
 
   const { data, error } = await supabase
-    .from("vouchers")
+    .from("rewards")
     .select("*")
-    .eq("is_active", true)
-    .order("points_required", { ascending: true });
+    .eq("available", true)
+    .order("cost_in_points", { ascending: true, nullsFirst: false });
 
   if (error) throw error;
 
   return (
-    data?.map((item) => ({
-      id: item.id,
-      category: item.category,
-      brand: item.brand,
-      title: item.title,
-      description: item.description,
-      pointsRequired: item.points_required,
-      originalValue: item.original_value,
-      discountType: item.discount_type,
-      discountValue: item.discount_value,
-      image: item.image,
-      logo: item.logo,
-      color: item.color,
-      validityDays: item.validity_days,
-      termsAndConditions: item.terms_and_conditions || [],
-      isActive: item.is_active,
-      stockLimit: item.stock_limit,
-      currentStock: item.current_stock,
-    })) || []
+    data?.map(mapReward) || []
   );
 };
 
@@ -80,15 +107,7 @@ export const fetchVouchers = async (): Promise<Voucher[]> => {
  */
 export const getUserPoints = async (userId: string): Promise<number> => {
   if (!supabase) {
-    // Local fallback: read points from localStorage
-    try {
-      const key = `ecosort_local_points_${userId}`;
-      const raw = localStorage.getItem(key);
-      return raw ? Number(raw) : 0;
-    } catch (e) {
-      console.warn("Local getUserPoints failed", e);
-      return 0;
-    }
+    throw new Error("Supabase not configured");
   }
 
   const { data, error } = await supabase
@@ -112,123 +131,41 @@ export const redeemVoucherReal = async (
     throw new Error("Supabase not configured");
   }
 
-  // Start a Supabase transaction
-  const { data: voucher, error: voucherError } = await supabase
-    .from("vouchers")
+  const { data: reward, error: rewardError } = await supabase
+    .from("rewards")
     .select("*")
     .eq("id", voucherId)
     .single();
 
-  if (voucherError || !voucher) {
+  if (rewardError || !reward) {
     throw new VoucherNotFoundError(voucherId);
   }
 
-  // Check stock
-  if (voucher.current_stock !== null && voucher.current_stock <= 0) {
+  if (!reward.available) {
+    throw new VoucherNotFoundError(voucherId);
+  }
+  if (reward.stock !== null && reward.stock <= 0) {
     throw new VoucherOutOfStockError(voucherId);
   }
+  if (reward.cost_in_points == null || reward.cost_in_points <= 0) {
+    throw new Error("This reward does not have a valid points cost.");
+  }
 
-  // Get user points
   const userPoints = await getUserPoints(userId);
-
-  // Check if user can redeem
-  if (userPoints < voucher.points_required) {
-    throw new InsufficientPointsError(voucher.points_required, userPoints);
+  if (userPoints < reward.cost_in_points) {
+    throw new InsufficientPointsError(reward.cost_in_points, userPoints);
   }
 
-  // Generate unique voucher code
   const voucherCode = generateVoucherCode(voucherId);
-  const now = new Date();
-  const expiresAt = new Date(now);
-  expiresAt.setDate(expiresAt.getDate() + voucher.validity_days);
+  const { data, error } = await supabase.rpc("redeem_reward", {
+    reward_id_input: voucherId,
+    redemption_code_input: voucherCode,
+  });
+  if (error) throw error;
 
-  try {
-    // Create redemption record
-    const { data: redemption, error: redemptionError } = await supabase
-      .from("voucher_redemptions")
-      .insert({
-        user_id: userId,
-        voucher_id: voucherId,
-        voucher_code: voucherCode,
-        points_used: voucher.points_required,
-        status: "active",
-        expires_at: expiresAt.toISOString(),
-      })
-      .select()
-      .single();
-
-    if (redemptionError) throw redemptionError;
-
-    // Deduct points from user
-    const { error: pointsError } = await supabase
-      .from("user_profiles")
-      .update({
-        points: userPoints - voucher.points_required,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", userId);
-
-    if (pointsError) throw pointsError;
-
-    // Update voucher stock
-    if (voucher.current_stock !== null) {
-      const { error: stockError } = await supabase
-        .from("vouchers")
-        .update({
-          current_stock: voucher.current_stock - 1,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", voucherId);
-
-      if (stockError) throw stockError;
-    }
-
-    // Record transaction
-    await recordTransaction(userId, {
-      type: "redeemed",
-      points: -voucher.points_required,
-      description: `Redeemed: ${voucher.title}`,
-      metadata: {
-        voucher_id: voucherId,
-        voucher_code: voucherCode,
-        redemption_id: redemption.id,
-      },
-    });
-
-    // Return formatted redemption
-    return {
-      id: redemption.id,
-      userId: redemption.user_id,
-      voucherId: redemption.voucher_id,
-      voucherCode: redemption.voucher_code,
-      pointsUsed: redemption.points_used,
-      status: redemption.status,
-      redeemedAt: redemption.redeemed_at,
-      expiresAt: redemption.expires_at,
-      voucher: {
-        id: voucher.id,
-        category: voucher.category,
-        brand: voucher.brand,
-        title: voucher.title,
-        description: voucher.description,
-        pointsRequired: voucher.points_required,
-        originalValue: voucher.original_value,
-        discountType: voucher.discount_type,
-        discountValue: voucher.discount_value,
-        image: voucher.image,
-        logo: voucher.logo,
-        color: voucher.color,
-        validityDays: voucher.validity_days,
-        termsAndConditions: voucher.terms_and_conditions || [],
-        isActive: voucher.is_active,
-        stockLimit: voucher.stock_limit,
-        currentStock: voucher.current_stock,
-      },
-    };
-  } catch (error) {
-    console.error("Voucher redemption failed:", error);
-    throw error;
-  }
+  const redemption = Array.isArray(data) ? data[0] : data;
+  if (!redemption) throw new Error("Redemption did not return a record.");
+  return mapRedemption({ ...redemption, reward });
 };
 
 /**
@@ -244,43 +181,15 @@ export const recordTransaction = async (
   },
 ): Promise<UserTransaction> => {
   if (!supabase) {
-    // Local fallback: persist to localStorage
-    try {
-      const key = `ecosort_local_transactions_${userId}`;
-      const raw = localStorage.getItem(key);
-      const list = raw ? JSON.parse(raw) : [];
-      const item = {
-        id: `local-${Date.now()}`,
-        user_id: userId,
-        type: transaction.type,
-        points: transaction.points,
-        description: transaction.description,
-        metadata: transaction.metadata || {},
-        created_at: new Date().toISOString(),
-      };
-      list.unshift(item);
-      localStorage.setItem(key, JSON.stringify(list));
-      return {
-        id: item.id,
-        userId: item.user_id,
-        type: item.type,
-        points: item.points,
-        description: item.description,
-        metadata: item.metadata,
-        createdAt: item.created_at,
-      };
-    } catch (e) {
-      console.warn("Local recordTransaction failed", e);
-      throw e;
-    }
+    throw new Error("Supabase not configured");
   }
 
   const { data, error } = await supabase
-    .from("user_transactions")
+    .from("user_activities")
     .insert({
       user_id: userId,
-      type: transaction.type,
-      points: transaction.points,
+      activity_type: transaction.type,
+      points_earned: transaction.points,
       description: transaction.description,
       metadata: transaction.metadata || {},
     })
@@ -292,8 +201,13 @@ export const recordTransaction = async (
   return {
     id: data.id,
     userId: data.user_id,
-    type: data.type,
-    points: data.points,
+    type:
+      data.activity_type === "redeemed" || data.points_earned < 0
+        ? "redeemed"
+        : data.activity_type === "bonus"
+          ? "bonus"
+          : "earned",
+    points: data.points_earned,
     description: data.description,
     metadata: data.metadata,
     createdAt: data.created_at,
@@ -310,23 +224,7 @@ export const awardPoints = async (
   metadata?: Record<string, any>,
 ): Promise<void> => {
   if (!supabase) {
-    // Local fallback: increment local points and record transaction
-    try {
-      const key = `ecosort_local_points_${userId}`;
-      const current = Number(localStorage.getItem(key) || "0");
-      localStorage.setItem(key, String(current + points));
-
-      await recordTransaction(userId, {
-        type: "earned",
-        points,
-        description,
-        metadata,
-      });
-      return;
-    } catch (e) {
-      console.warn("Local awardPoints failed:", e);
-      return;
-    }
+    throw new Error("Supabase not configured");
   }
 
   try {
@@ -363,52 +261,14 @@ export const getUserRedemptionsReal = async (
   }
 
   const { data, error } = await supabase
-    .from("voucher_redemptions")
-    .select(
-      `
-      *,
-      voucher:vouchers(*)
-    `,
-    )
+    .from("reward_redemptions")
+    .select("*, reward:rewards(*)")
     .eq("user_id", userId)
     .order("redeemed_at", { ascending: false });
 
   if (error) throw error;
 
-  return (
-    data?.map((item) => ({
-      id: item.id,
-      userId: item.user_id,
-      voucherId: item.voucher_id,
-      voucherCode: item.voucher_code,
-      pointsUsed: item.points_used,
-      status: item.status,
-      redeemedAt: item.redeemed_at,
-      expiresAt: item.expires_at,
-      usedAt: item.used_at,
-      voucher: item.voucher
-        ? {
-            id: item.voucher.id,
-            category: item.voucher.category,
-            brand: item.voucher.brand,
-            title: item.voucher.title,
-            description: item.voucher.description,
-            pointsRequired: item.voucher.points_required,
-            originalValue: item.voucher.original_value,
-            discountType: item.voucher.discount_type,
-            discountValue: item.voucher.discount_value,
-            image: item.voucher.image,
-            logo: item.voucher.logo,
-            color: item.voucher.color,
-            validityDays: item.voucher.validity_days,
-            termsAndConditions: item.voucher.terms_and_conditions || [],
-            isActive: item.voucher.is_active,
-            stockLimit: item.voucher.stock_limit,
-            currentStock: item.voucher.current_stock,
-          }
-        : undefined,
-    })) || []
-  );
+  return (data || []).map(mapRedemption);
 };
 
 /**
@@ -421,26 +281,59 @@ export const getUserTransactionsReal = async (
     throw new Error("Supabase not configured");
   }
 
-  const { data, error } = await supabase
-    .from("user_transactions")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(100);
+  const [{ data: activities, error: activityError }, { data: redemptions, error: redemptionError }] =
+    await Promise.all([
+      supabase
+        .from("user_activities")
+        .select("id, user_id, activity_type, points_earned, description, metadata, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(100),
+      supabase
+        .from("reward_redemptions")
+        .select("id, user_id, reward_id, points_used, redemption_code, redeemed_at, reward:rewards(name, provider, category)")
+        .eq("user_id", userId)
+        .order("redeemed_at", { ascending: false })
+        .limit(100),
+    ]);
 
-  if (error) throw error;
+  if (activityError) throw activityError;
+  if (redemptionError) throw redemptionError;
 
-  return (
-    data?.map((item) => ({
+  const activityTransactions = (activities || []).map((item) => ({
+    id: item.id,
+    userId: item.user_id,
+    type:
+      item.activity_type === "redeemed" || item.points_earned < 0
+        ? ("redeemed" as const)
+        : item.activity_type === "bonus"
+          ? ("bonus" as const)
+          : ("earned" as const),
+    points: item.points_earned || 0,
+    description: item.description || item.activity_type || "Activity",
+    metadata: item.metadata,
+    createdAt: item.created_at,
+  }));
+  const redemptionTransactions = (redemptions || []).map((item) => {
+    const reward = Array.isArray(item.reward) ? item.reward[0] : item.reward;
+    return {
       id: item.id,
       userId: item.user_id,
-      type: item.type,
-      points: item.points,
-      description: item.description,
-      metadata: item.metadata,
-      createdAt: item.created_at,
-    })) || []
-  );
+      type: "redeemed" as const,
+      points: -(item.points_used || 0),
+      description: `Redeemed: ${reward?.name || "Reward"}`,
+      metadata: {
+        voucher_code: item.redemption_code,
+        brand: reward?.provider,
+        category: reward?.category,
+      },
+      createdAt: item.redeemed_at,
+    };
+  });
+
+  return [...activityTransactions, ...redemptionTransactions]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 100);
 };
 
 /**
@@ -454,10 +347,9 @@ export const markVoucherAsUsed = async (
   }
 
   const { error } = await supabase
-    .from("voucher_redemptions")
+    .from("reward_redemptions")
     .update({
-      status: "used",
-      used_at: new Date().toISOString(),
+      status: "completed",
     })
     .eq("id", redemptionId);
 
@@ -479,9 +371,10 @@ export const getAvailableVouchersForUser = async (
 
   return vouchers.filter(
     (voucher) =>
+      voucher.pointsRequired !== null &&
       voucher.pointsRequired <= userPoints &&
       voucher.isActive &&
-      (voucher.currentStock === undefined || voucher.currentStock > 0),
+      (voucher.currentStock == null || voucher.currentStock > 0),
   );
 };
 
@@ -496,63 +389,19 @@ export const validateVoucherCode = async (
   }
 
   const { data, error } = await supabase
-    .from("voucher_redemptions")
-    .select(
-      `
-      *,
-      voucher:vouchers(*)
-    `,
-    )
-    .eq("voucher_code", voucherCode)
-    .eq("status", "active")
-    .single();
+    .from("reward_redemptions")
+    .select("*, reward:rewards(*)")
+    .eq("redemption_code", voucherCode)
+    .eq("status", "pending")
+    .maybeSingle();
 
   if (error || !data) return null;
-
-  // Check if voucher is expired
-  const now = new Date();
-  const expiresAt = new Date(data.expires_at);
-
-  if (now > expiresAt) {
-    // Mark as expired
+  if (data.reward?.valid_until && new Date() > new Date(data.reward.valid_until)) {
     await supabase
-      .from("voucher_redemptions")
-      .update({ status: "expired" })
+      .from("reward_redemptions")
+      .update({ status: "cancelled" })
       .eq("id", data.id);
-
     return null;
   }
-
-  return {
-    id: data.id,
-    userId: data.user_id,
-    voucherId: data.voucher_id,
-    voucherCode: data.voucher_code,
-    pointsUsed: data.points_used,
-    status: data.status,
-    redeemedAt: data.redeemed_at,
-    expiresAt: data.expires_at,
-    usedAt: data.used_at,
-    voucher: data.voucher
-      ? {
-          id: data.voucher.id,
-          category: data.voucher.category,
-          brand: data.voucher.brand,
-          title: data.voucher.title,
-          description: data.voucher.description,
-          pointsRequired: data.voucher.points_required,
-          originalValue: data.voucher.original_value,
-          discountType: data.voucher.discount_type,
-          discountValue: data.voucher.discount_value,
-          image: data.voucher.image,
-          logo: data.voucher.logo,
-          color: data.voucher.color,
-          validityDays: data.voucher.validity_days,
-          termsAndConditions: data.voucher.terms_and_conditions || [],
-          isActive: data.voucher.is_active,
-          stockLimit: data.voucher.stock_limit,
-          currentStock: data.voucher.current_stock,
-        }
-      : undefined,
-  };
+  return mapRedemption(data);
 };

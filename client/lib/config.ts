@@ -8,7 +8,9 @@ export const config = {
   app: {
     name: "Green India",
     url: import.meta.env.VITE_APP_URL || "http://localhost:8080",
-    apiBaseUrl: import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api",
+    apiBaseUrl:
+      import.meta.env.VITE_API_BASE_URL ||
+      "https://greentrace-wbqx.onrender.com",
   },
 
   // Supabase configuration
@@ -55,8 +57,8 @@ export const config = {
       hazardous: 20,
     },
     maxUploadSize: 10 * 1024 * 1024, // 10MB
-    supportedImageTypes: ['image/jpeg', 'image/png', 'image/webp'],
-    mapDefaultCenter: { lat: 40.7128, lng: -74.0060 }, // New York City
+    supportedImageTypes: ["image/jpeg", "image/png", "image/webp"],
+    mapDefaultCenter: { lat: 40.7128, lng: -74.006 }, // New York City
     mapDefaultZoom: 12,
   },
 } as const;
@@ -74,13 +76,21 @@ export const validateConfig = () => {
   }
 
   // Check Maps config for location features
-  if (!config.maps.openStreetMapApiKey && !config.maps.mapboxToken && !config.maps.googleMapsApiKey) {
-    console.warn("No map API keys configured. Map functionality will use default OpenStreetMap without API key.");
+  if (
+    !config.maps.openStreetMapApiKey &&
+    !config.maps.mapboxToken &&
+    !config.maps.googleMapsApiKey
+  ) {
+    console.warn(
+      "No map API keys configured. Map functionality will use default OpenStreetMap without API key.",
+    );
   }
 
   // Check ML config for classification features
   if (!config.ml.apiEndpoint && !config.ml.tensorflowModelUrl) {
-    console.warn("No ML API endpoint or TensorFlow model URL configured. Classification will use mock data.");
+    console.warn(
+      "No ML API endpoint or TensorFlow model URL configured. Classification is unavailable until a model is configured.",
+    );
   }
 
   if (errors.length > 0) {

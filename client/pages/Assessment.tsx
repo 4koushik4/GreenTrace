@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import {
   useWasteClassification,
+  persistWasteClassification,
   validateImageForClassification,
 } from "@/lib/ml-integration";
 import {
@@ -30,35 +31,40 @@ import {
   getDirectionsUrl,
   RecyclingFacility,
 } from "@/lib/openstreetmap";
-import { useAuth } from "../App";
-import { useAuth as useSbAuth } from "@/lib/supabase";
+import { useAuth as useSbAuth, supabase } from "@/lib/supabase";
 import { awardPoints } from "@/lib/voucher-operations";
 import jsQR from "jsqr";
 
 type Step = 1 | 2 | 3 | 4;
-const EXPECTED_QR = "koushik";
 
 async function decodeQRFromImage(file: File): Promise<string | null> {
   const img = new Image();
-  img.src = URL.createObjectURL(file);
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Unable to load QR image."));
+      img.src = imageUrl;
+    });
 
-  await new Promise((res) => (img.onload = res));
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = img.width;
-  canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Unable to read QR image.");
+    ctx.drawImage(img, 0, 0);
 
-  const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, canvas.width, canvas.height);
 
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const code = jsQR(imageData.data, canvas.width, canvas.height);
-
-  return code?.data || null;
+    return code?.data || null;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
 }
 
 const Assessment: React.FC = () => {
-  const { user, updateUser } = useAuth();
   const { user: sbUser } = useSbAuth();
   const { classifyWaste, loading: classifying } = useWasteClassification();
   const { location, getCurrentLocation } = useGeolocation();
@@ -76,6 +82,7 @@ const Assessment: React.FC = () => {
   const [selectedCenter, setSelectedCenter] =
     useState<RecyclingFacility | null>(null);
   const [qrCodeValue, setQrCodeValue] = useState("");
+  const [qrError, setQrError] = useState<string | null>(null);
   const [qrOption, setQrOption] = useState<"manual" | "scan" | "upload" | null>(null);
 
   const [verifying, setVerifying] = useState(false);
@@ -85,6 +92,15 @@ const Assessment: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const verificationInProgress = useRef(false);
+  const qrVerified = useRef(false);
+
+  const classifyAndPersist = async (file: File) => {
+    const result = await classifyWaste(file);
+    setClassification(result);
+    if (sbUser?.id) await persistWasteClassification(result, sbUser.id);
+    return result;
+  };
 
   const onDrop = async (acceptedFiles: File[]) => {
     if (processing) return;
@@ -99,13 +115,12 @@ const Assessment: React.FC = () => {
     setPreviewUrl(URL.createObjectURL(file));
     setLastFile(file);
     setPredictionError(null);
+    setClassification(null);
     try {
-      const result = await classifyWaste(file);
-      setClassification(result);
+      await classifyAndPersist(file);
     } catch (err: any) {
       console.error("Classification failed:", err);
       setPredictionError(err?.message || String(err) || "Prediction failed");
-      setClassification(null);
     } finally {
       setProcessing(false);
       try {
@@ -189,24 +204,12 @@ const Assessment: React.FC = () => {
     );
     const code = jsQR(imageData.data, canvasRef.current.width, canvasRef.current.height);
 
-    if (code?.data === EXPECTED_QR) {
-      setQrCodeValue(code.data);
-      setVerified(true);
+    if (code?.data) {
       stopCamera();
-      
-      // Award points
-      const bonus = 10;
-      try {
-        if (sbUser?.id) {
-          await awardPoints(sbUser.id, bonus, "QR verified");
-        } else {
-          updateUser({ points: (user?.points || 0) + bonus });
-        }
-      } catch {
-        updateUser({ points: (user?.points || 0) + bonus });
+      if (await validateAndRewardQr(code.data)) {
+        setQrCodeValue(code.data);
+        setStep(4);
       }
-      
-      setStep(4);
     }
   };
 
@@ -234,33 +237,43 @@ const Assessment: React.FC = () => {
     }
   }, [qrOption]);
 
-  const handleVerifyQR = async () => {
-  setVerifying(true);
-  await new Promise((r) => setTimeout(r, 500));
+  const validateAndRewardQr = async (value: string) => {
+    if (qrVerified.current) return true;
+    if (verificationInProgress.current) return false;
+    verificationInProgress.current = true;
+    setVerifying(true);
+    setQrError(null);
+    try {
+      if (!sbUser?.id || !supabase) {
+        throw new Error("Sign in to verify a QR code.");
+      }
 
-  const ok = qrCodeValue.trim().toLowerCase() === EXPECTED_QR;
+      const { data, error } = await supabase
+        .from("user_qr_codes")
+        .select("qr_code")
+        .eq("user_id", sbUser.id)
+        .maybeSingle();
 
-  setVerified(ok);
-  setVerifying(false);
+      if (error) throw new Error(`QR validation is unavailable: ${error.message}`);
+      if (!data?.qr_code) throw new Error("No QR verifier is registered for this account.");
+      if (value.trim() !== data.qr_code) throw new Error("Invalid QR code.");
 
-  if (!ok) {
-    alert("❌ Invalid QR or Code");
-    return;
-  }
-
-  const bonus = 10;
-  try {
-    if (sbUser?.id) {
-      await awardPoints(sbUser.id, bonus, "QR verified");
-    } else {
-      updateUser({ points: (user?.points || 0) + bonus });
+      await awardPoints(sbUser.id, 10, "QR verified");
+      qrVerified.current = true;
+      setVerified(true);
+      return true;
+    } catch (error) {
+      setQrError(error instanceof Error ? error.message : "QR validation failed.");
+      return false;
+    } finally {
+      verificationInProgress.current = false;
+      setVerifying(false);
     }
-  } catch {
-    updateUser({ points: (user?.points || 0) + bonus });
-  }
+  };
 
-  setStep(4);
-};
+  const handleVerifyQR = async () => {
+    if (await validateAndRewardQr(qrCodeValue)) setStep(4);
+  };
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -335,13 +348,12 @@ const Assessment: React.FC = () => {
                     setPreviewUrl(URL.createObjectURL(file));
                     setLastFile(file);
                     setPredictionError(null);
+                    setClassification(null);
                     try {
-                      const result = await classifyWaste(file);
-                      setClassification(result);
+                      await classifyAndPersist(file);
                     } catch (err) {
                       console.error("Classification failed:", err);
                       setPredictionError((err as any)?.message || String(err) || "Prediction failed");
-                      setClassification(null);
                     } finally {
                       setProcessing(false);
                       // reset input so same file can be selected again if needed
@@ -361,9 +373,9 @@ const Assessment: React.FC = () => {
                           if (!lastFile) return;
                           setProcessing(true);
                           setPredictionError(null);
+                          setClassification(null);
                           try {
-                            const r = await classifyWaste(lastFile);
-                            setClassification(r);
+                            await classifyAndPersist(lastFile);
                           } catch (err: any) {
                             setPredictionError(err?.message || String(err) || "Prediction failed");
                           } finally {
@@ -554,6 +566,9 @@ const Assessment: React.FC = () => {
               <p className="text-sm text-muted-foreground mb-4">
                 Choose your verification method
               </p>
+              {qrError && (
+                <p className="mb-3 text-sm text-red-600" role="alert">{qrError}</p>
+              )}
 
               {!qrOption && (
                 <div className="space-y-3">
@@ -588,7 +603,10 @@ const Assessment: React.FC = () => {
                   <Input
                     placeholder="Enter verification code"
                     value={qrCodeValue}
-                    onChange={(e) => setQrCodeValue(e.target.value)}
+                    onChange={(e) => {
+                      setQrCodeValue(e.target.value);
+                      setQrError(null);
+                    }}
                     autoFocus
                   />
                   <Button 
@@ -687,34 +705,17 @@ const Assessment: React.FC = () => {
                       setVerifying(true);
                       try {
                         const decoded = await decodeQRFromImage(file);
-                        if (decoded === EXPECTED_QR) {
+                        if (decoded && await validateAndRewardQr(decoded)) {
                           setQrCodeValue(decoded);
-                          setVerified(true);
-                          
-                          // Award points
-                          const bonus = 10;
-                          try {
-                            if (sbUser?.id) {
-                              await awardPoints(sbUser.id, bonus, "QR verified");
-                            } else {
-                              updateUser({ points: (user?.points || 0) + bonus });
-                            }
-                          } catch {
-                            updateUser({ points: (user?.points || 0) + bonus });
-                          }
-                          
                           setStep(4);
                         } else {
-                          alert("❌ Invalid QR Code");
-                          setQrOption(null);
-                          setQrCodeValue("");
+                          if (!decoded) setQrError("Could not read QR code.");
                         }
                       } catch (err) {
-                        alert("❌ Could not read QR code");
-                        setQrOption(null);
-                        setQrCodeValue("");
+                        setQrError("Could not read QR code.");
                       } finally {
                         setVerifying(false);
+                        e.target.value = "";
                       }
                     }}
                   />
@@ -756,7 +757,20 @@ const Assessment: React.FC = () => {
               </div>
               <div className="text-muted-foreground">+10 points earned.</div>
               <div className="mt-4">
-                <Button onClick={() => setStep(1)} variant="outline">
+                <Button
+                  onClick={() => {
+                    qrVerified.current = false;
+                    setVerified(false);
+                    setQrCodeValue("");
+                    setQrError(null);
+                    setQrOption(null);
+                    setClassification(null);
+                    setLastFile(null);
+                    setPreviewUrl(null);
+                    setStep(1);
+                  }}
+                  variant="outline"
+                >
                   Start New Assessment
                 </Button>
               </div>

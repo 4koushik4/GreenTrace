@@ -114,20 +114,63 @@ Rules: Be short and helpful. Use emojis sparingly. You are NOT ChatGPT — you a
   app.post("/api/predict", handlePredict);
 
   // =====================================================
-  // Developer Auth — hardcoded INDIA/BHARAT
+  // Developer Auth — only active super_admin accounts are allowed.
   // =====================================================
 
-  app.post("/api/dev/login", (req, res) => {
-    const { username, password } = req.body;
-    if (username === "INDIA" && password === "BHARAT") {
+  app.post("/api/dev/login", async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password || typeof email !== "string" || typeof password !== "string") {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+    const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !anonKey || !serviceKey) {
+      return res.status(500).json({ error: "Developer authentication is not configured on the server." });
+    }
+
+    try {
+      const { createClient } = await import("@supabase/supabase-js");
+      const authClient = createClient(supabaseUrl, anonKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      const adminClient = createClient(supabaseUrl, serviceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      const { data: authData, error: authError } =
+        await authClient.auth.signInWithPassword({ email, password });
+
+      if (authError || !authData.user || !authData.session) {
+        return res.status(401).json({ error: authError?.message || "Invalid email or password." });
+      }
+
+      const { data: adminUser, error: adminError } = await adminClient
+        .from("admin_users")
+        .select("role, is_active")
+        .eq("user_id", authData.user.id)
+        .eq("role", "super_admin")
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (adminError) {
+        console.error("[Developer Login] Failed to verify super_admin access:", adminError.message);
+        return res.status(500).json({ error: "Unable to verify developer authorization." });
+      }
+      if (!adminUser) {
+        return res.status(403).json({ error: "An active super_admin account is required." });
+      }
+
       return res.json({
         success: true,
         role: "developer",
-        username: "INDIA",
-        token: Buffer.from(`INDIA:${Date.now()}`).toString("base64"),
+        username: authData.user.email || email,
+        token: authData.session.access_token,
       });
+    } catch (err: any) {
+      console.error("[Developer Login] Error:", err?.message || err);
+      return res.status(500).json({ error: "Developer authentication failed due to a server error." });
     }
-    return res.status(401).json({ error: "Invalid credentials" });
   });
 
   // Mount dev CRUD routes (service role — bypasses RLS)

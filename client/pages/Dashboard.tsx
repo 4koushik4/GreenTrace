@@ -1,5 +1,17 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import {
+  AlertTriangle,
+  Camera,
+  ChevronRight,
+  Globe,
+  Leaf,
+  MapPin,
+  Recycle,
+  Target,
+  X,
+} from "lucide-react";
+import { Link } from "react-router-dom";
 import {
   Card,
   CardContent,
@@ -9,637 +21,393 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Leaf,
-  Recycle,
-  AlertTriangle,
-  Coins,
-  TrendingUp,
-  Target,
-  Camera,
-  MapPin,
-  Award,
-  BarChart3,
-  ChevronRight,
-  Sparkles,
-  Globe,
-  TreePine,
-  Zap,
-  Users,
-  X,
-} from "lucide-react";
-import { Link } from "react-router-dom";
-import { ArrowDown } from "lucide-react";
-// Import our integration hooks
-import {
-  useAuth as useSupabaseAuth,
-  useUserProfile,
-  useWasteClassifications,
-  useUserLocation,
-} from "@/lib/supabase";
+import { supabase, useAuth } from "@/lib/supabase";
 
-// Dashboard stats interface
-interface DashboardStats {
-  totalWasteSegregated: number;
-  biodegradableCount: number;
-  recyclableCount: number;
-  hazardousCount: number;
-  ecoPointsEarned: number;
-  co2Saved: number;
-  weeklyProgress: number;
-  monthlyGoal: number;
+interface DashboardProfile {
+  full_name: string | null;
+  points: number | null;
+  eco_score: number | null;
+  level: string | null;
 }
 
-// Animated Counter Component
-const AnimatedCounter = ({
-  value,
-  suffix = "",
-  duration = 2000,
-}: {
-  value: number;
-  suffix?: string;
-  duration?: number;
-}) => {
-  const [displayValue, setDisplayValue] = useState(0);
+interface Classification {
+  id: string;
+  classification: string;
+  created_at: string;
+}
 
-  useEffect(() => {
-    let startTime: number;
-    const animate = (currentTime: number) => {
-      if (!startTime) startTime = currentTime;
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
+interface Pickup {
+  id: string;
+  status: string;
+  pickup_date: string;
+  created_at: string;
+}
 
-      setDisplayValue(Math.floor(progress * value));
-
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      }
-    };
-
-    requestAnimationFrame(animate);
-  }, [value, duration]);
-
-  return (
-    <span>
-      {displayValue}
-      {suffix}
-    </span>
-  );
-};
+const cardStyle =
+  "group relative overflow-hidden rounded-2xl border border-slate-700/70 bg-gradient-to-br from-slate-800/90 via-slate-800/70 to-slate-900/90 text-white shadow-lg shadow-black/10 transition-all duration-300 hover:-translate-y-1 hover:border-emerald-400/30 hover:shadow-xl hover:shadow-emerald-950/20";
 
 export default function Dashboard() {
-  // Authentication and user data
-  const { user, loading: authLoading } = useSupabaseAuth();
-
-  const { profile, loading: profileLoading } = useUserProfile(user ? user.id : null);
-const { classifications } = useWasteClassifications(user ? user.id : null);
-
-  // User location
-  const { location: userLocation, saveLocation } = useUserLocation(user ? user.id : null);
-
-  // Local state for location inputs
-  const [region, setRegion] = useState(userLocation?.region || "");
-  const [wardNumber, setWardNumber] = useState(userLocation?.ward_number || "");
-  const [locationSaved, setLocationSaved] = useState(!!userLocation);
+  const { user, loading: authLoading } = useAuth();
+  const [profile, setProfile] = useState<DashboardProfile | null>(null);
+  const [classifications, setClassifications] = useState<Classification[]>([]);
+  const [pickups, setPickups] = useState<Pickup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showQRModal, setShowQRModal] = useState(false);
 
-  // Update local state when userLocation changes
   useEffect(() => {
-    if (userLocation) {
-      setRegion(userLocation.region);
-      setWardNumber(userLocation.ward_number);
-      setLocationSaved(true);
+    let active = true;
+
+    if (!supabase || !user) {
+      setProfile(null);
+      setClassifications([]);
+      setPickups([]);
+      setLoading(false);
+      return () => {
+        active = false;
+      };
     }
-  }, [userLocation]);
 
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      supabase
+        .from("user_profiles")
+        .select("full_name, points, eco_score, level")
+        .eq("id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("waste_classifications")
+        .select("id, classification, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("pickups")
+        .select("id, status, pickup_date, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+    ])
+      .then(([profileResult, classificationResult, pickupResult]) => {
+        if (!active) return;
+        const fetchError =
+          profileResult.error ??
+          classificationResult.error ??
+          pickupResult.error;
+        if (fetchError) {
+          setError(fetchError.message);
+          return;
+        }
+        setProfile(profileResult.data);
+        setClassifications(classificationResult.data ?? []);
+        setPickups(pickupResult.data ?? []);
+      })
+      .catch((fetchError: unknown) => {
+        if (!active) return;
+        setError(
+          fetchError instanceof Error
+            ? fetchError.message
+            : "Unable to load your dashboard data.",
+        );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
 
-  // Show loading state while fetching data
-  if (authLoading) {
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
+  if (!supabase) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500"></div>
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-6 text-red-300">
+        Supabase is not configured, so your dashboard data is unavailable.
       </div>
     );
   }
 
-  // Ensure we have valid user data
-  if (!user) return null;
-if (!profile) return null;
+  if (authLoading || loading) {
+    return (
+      <div className="min-h-64 flex items-center justify-center text-gray-300">
+        <div className="flex items-center gap-3" role="status">
+          <span className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500" />
+          Loading your dashboard…
+        </div>
+      </div>
+    );
+  }
 
+  if (!user) {
+    return (
+      <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-6 text-gray-300">
+        Sign in to view your dashboard.
+      </div>
+    );
+  }
 
-  // Use authenticated user data only
-  const userData = profile;
-  const userClassifications = classifications.length > 0 ? classifications : [];
+  if (error) {
+    return (
+      <div
+        className="rounded-lg border border-red-500/30 bg-red-500/10 p-6 text-red-300"
+        role="alert"
+      >
+        <h2 className="font-semibold">Unable to load dashboard data</h2>
+        <p className="mt-1 text-sm">{error}</p>
+      </div>
+    );
+  }
 
-  // Calculate dashboard stats
-  const stats: DashboardStats = {
-    totalWasteSegregated: userData.waste_classified,
-    biodegradableCount: Math.floor(userData.waste_classified * 0.4),
-    recyclableCount: Math.floor(userData.waste_classified * 0.45),
-    hazardousCount: Math.floor(userData.waste_classified * 0.15),
-    ecoPointsEarned: userData.points,
-    co2Saved: Math.floor(userData.waste_classified * 2.3),
-    weeklyProgress: 78,
-    monthlyGoal: 200,
-  };
-
-  // Handler functions
-  const handleSaveLocation = async () => {
-    if (!region.trim() || !wardNumber.trim()) {
-      alert("Please fill in all location fields");
-      return;
-    }
-    const result = await saveLocation("", region.trim(), wardNumber.trim());
-    if (result) {
-      setLocationSaved(true);
-      alert("Location saved successfully!");
-    }
-  };
-
-  // Animation variants
-  const containerVariants: any = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        delayChildren: 0.1,
-        staggerChildren: 0.1,
-      },
-    },
-  };
-
-  const itemVariants: any = {
-    hidden: { y: 20, opacity: 0 },
-    visible: {
-      y: 0,
-      opacity: 1,
-      transition: { duration: 0.5, ease: "easeOut" },
-    },
-  };
-
-  const cardHoverVariants: any = {
-    hover: {
-      scale: 1.02,
-      y: -5,
-      transition: { duration: 0.3, ease: "easeOut" },
-    },
-  };
-
-  // Dashboard metric cards data
-  const metricCards = [
+  const countClass = (name: string) =>
+    classifications.filter(
+      (item) => item.classification?.toLowerCase() === name,
+    ).length;
+  const collectedPickups = pickups.filter(
+    (pickup) => pickup.status?.toLowerCase() === "collected",
+  ).length;
+  const lastSevenDays = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const recentClassifications = classifications.filter(
+    (item) => new Date(item.created_at).getTime() >= lastSevenDays,
+  ).length;
+  const stats = [
     {
-      title: "Total Waste Segregated",
-      value: stats.totalWasteSegregated,
-      suffix: " kg",
-      description: "Items properly sorted",
+      title: "Items Classified",
+      value: classifications.length,
+      detail: `${countClass("biodegradable")} biodegradable`,
       icon: Leaf,
-      color: "from-green-500 to-emerald-600",
-      bgColor: "bg-green-500/10",
-      borderColor: "border-green-500/20",
-      textColor: "text-green-400",
-      change: "+12% from last week",
+      color: "text-green-400",
     },
     {
-      title: "Recyclables Recycled",
-      value: stats.recyclableCount,
-      suffix: " items",
-      description: "Materials diverted from landfill",
+      title: "Recyclable",
+      value: countClass("recyclable"),
+      detail: "Observed classifications",
       icon: Recycle,
-      color: "from-blue-500 to-cyan-600",
-      bgColor: "bg-blue-500/10",
-      borderColor: "border-blue-500/20",
-      textColor: "text-blue-400",
-      change: "+8% from last week",
+      color: "text-blue-400",
     },
     {
-      title: "Hazardous Waste Handled",
-      value: stats.hazardousCount,
-      suffix: " items",
-      description: "Safely disposed materials",
+      title: "Hazardous",
+      value: countClass("hazardous"),
+      detail: "Observed classifications",
       icon: AlertTriangle,
-      color: "from-red-500 to-pink-600",
-      bgColor: "bg-red-500/10",
-      borderColor: "border-red-500/20",
-      textColor: "text-red-400",
-      change: "+3% from last week",
+      color: "text-red-400",
     },
     {
-      title: "Eco-Points Earned",
-      value: stats.ecoPointsEarned,
-      suffix: " pts",
-      description: "Reward points accumulated",
-      icon: Coins,
-      color: "from-purple-500 to-violet-600",
-      bgColor: "bg-purple-500/10",
-      borderColor: "border-purple-500/20",
-      textColor: "text-purple-400",
-      change: "+15% from last week",
+      title: "Pickups Collected",
+      value: collectedPickups,
+      detail: `${pickups.length} total pickup requests`,
+      icon: MapPin,
+      color: "text-purple-400",
     },
   ];
+  const pickupStatuses = [
+    "requested",
+    "scheduled",
+    "collected",
+    "missed",
+    "cancelled",
+  ].map((status) => ({
+    status,
+    count: pickups.filter((pickup) => pickup.status?.toLowerCase() === status)
+      .length,
+  }));
+  const displayName =
+    profile?.full_name?.trim() ||
+    user.user_metadata?.full_name ||
+    user.email ||
+    "there";
 
   return (
     <motion.div
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-      className="space-y-6"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="space-y-8"
     >
-      {/* Welcome Section */}
-      <motion.div variants={itemVariants} className="mb-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div className="relative overflow-hidden rounded-3xl border border-emerald-400/15 bg-gradient-to-br from-emerald-950/70 via-slate-900 to-slate-900 p-6 shadow-2xl shadow-emerald-950/20 sm:p-8">
+        <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 left-1/3 h-56 w-56 rounded-full bg-cyan-400/10 blur-3xl" />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-2">
-              Welcome back, {userData.full_name}! 👋
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-300/80">
+              Your sustainability overview
+            </p>
+            <h1 className="mb-2 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+              Welcome back, {displayName}! 👋
             </h1>
-            <p className="text-gray-400 text-lg">
-              You're making a positive impact on the environment
+            <p className="max-w-2xl text-sm text-slate-300 sm:text-base">
+              A summary of your recorded classifications and pickups.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Badge className="bg-green-500/20 text-green-400 border-green-500/30 px-3 py-1">
-              <TreePine className="w-4 h-4 mr-1" />
-              {userData.level}
-            </Badge>
-            <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 px-3 py-1">
-              <Sparkles className="w-4 h-4 mr-1" />
-              Eco Score: {userData.eco_score}
-            </Badge>
-          </div>
+          {profile && (
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              {profile.level && (
+                <Badge className="border border-emerald-300/20 bg-emerald-300/10 px-3 py-1.5 text-emerald-200">
+                  {profile.level}
+                </Badge>
+              )}
+              {profile.eco_score != null && (
+                <Badge className="border border-violet-300/20 bg-violet-300/10 px-3 py-1.5 text-violet-200">
+                  Eco Score: {profile.eco_score}
+                </Badge>
+              )}
+              {profile.points != null && (
+                <Badge className="border border-sky-300/20 bg-sky-300/10 px-3 py-1.5 text-sky-200">
+                  {profile.points} points
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
-      </motion.div>
+      </div>
 
-     {/* ================= CENTERED GLOSSY 2 BOX SECTION ================= */}
-<motion.div
-  variants={itemVariants}
-  className="flex justify-center"
->
-  <div className="relative w-full max-w-6xl rounded-2xl overflow-hidden">
-    
-    {/* Gradient Background */}
-    <div className="absolute inset-0 bg-gradient-to-r from-eco-primary via-eco-secondary to-eco-accent opacity-90" />
-    <div className="absolute inset-0 backdrop-blur-xl bg-white/5" />
+      {!profile && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          No profile record is available yet. Profile scores and points are
+          unavailable.
+        </p>
+      )}
 
-    {/* Grid Content */}
-    <div className="relative z-10 grid grid-cols-1 lg:grid-cols-5 gap-6 p-8">
-
-      {/* 1️⃣ Assessment - 60% */}
-      <Card className="lg:col-span-3 border border-white/20 bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl transition-all duration-500 hover:-translate-y-1">
-       <CardHeader className="text-center items-center">
-  <CardTitle className="text-white flex flex-col items-center gap-3 text-lg">
-    <div className="p-2 bg-white/20 rounded-lg">
-      <Target className="w-5 h-5 text-white" />
-    </div>
-
-    <span>Start Assessment</span>
-  </CardTitle>
-
-  <CardDescription className="text-white/80 text-sm mt-3">
-    <div className="flex flex-col items-center gap-2">
-      <span>1️⃣Scan Waste</span>
-      <span>↓</span>
-      <span>2️⃣Select Center</span>
-      <span>↓</span>
-      <span>3️⃣Scan QR</span>
-      <span>↓</span>
-      <span>4️⃣Earn Rewards</span>
-    </div>
-  </CardDescription>
-</CardHeader>
-
-        <CardContent>
-          <Link to="/assessment">
-            <Button className="w-full bg-white text-eco-primary hover:bg-white/90 shadow-lg">
-              Start Now
-            </Button>
-          </Link>
-        </CardContent>
-      </Card>
-
-      {/* 2️⃣ QR - 40% */}
-      <Card
-        className="lg:col-span-2 border border-white/20 bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl transition-all duration-500 hover:-translate-y-1 cursor-pointer"
-        onClick={() => setShowQRModal(true)}
-      >
-        <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2 text-lg">
-            <div className="p-2 bg-white/20 rounded-lg">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
-            Your QR Code
-          </CardTitle>
-          <CardDescription className="text-white/80 text-sm">
-            Tap to view large
-          </CardDescription>
-        </CardHeader>
-
-        <CardContent className="flex flex-col items-center gap-4">
-          <div className="bg-white p-3 rounded-lg shadow-lg">
-            <img
-  src="https://i.postimg.cc/0Qt3BMFh/Screenshot-2026-01-22-200202.png"
-  alt="QR Code"
-  className="w-40 h-30"
-/>
-          </div>
-        </CardContent>
-      </Card>
-
-    </div>
-  </div>
-</motion.div>
-{/* ================= END SECTION ================= */}
- 
-
-      {/* Metric Cards */}
-      <motion.div
-        variants={containerVariants}
-        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8"
-      >
-        {metricCards.map((card, index) => (
-          <motion.div
-            key={card.title}
-            variants={itemVariants}
-            whileHover="hover"
-          >
-            <motion.div variants={cardHoverVariants}>
-              <Card
-                className={`border-0 bg-slate-800/50 backdrop-blur-sm ${card.bgColor} ${card.borderColor} border transition-all duration-300 hover:shadow-lg hover:shadow-${card.color.split("-")[1]}-500/25`}
-                style={{ backgroundColor: "rgb(15, 23, 42)" }}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+        {stats.map((stat) => (
+          <Card key={stat.title} className={cardStyle}>
+            <CardContent className="relative p-5 sm:p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-sm font-medium tracking-wide text-slate-300">
+                  {stat.title}
+                </h2>
+                <span className="rounded-xl bg-slate-950/60 p-2.5 ring-1 ring-white/10 transition-transform duration-300 group-hover:scale-110">
+                  <stat.icon className={`h-5 w-5 ${stat.color}`} />
+                </span>
+              </div>
+              <div
+                className={`text-4xl font-bold tracking-tight ${stat.color}`}
               >
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div
-                      className={`p-3 rounded-xl bg-gradient-to-br ${card.color} shadow-lg`}
-                    >
-                      <card.icon className="w-6 h-6 text-white" />
-                    </div>
-                    <Badge
-                      variant="secondary"
-                      className="bg-green-500/20 text-green-400 border-0 text-xs"
-                    >
-                      {card.change}
-                    </Badge>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-gray-300 text-sm font-medium">
-                      {card.title}
-                    </h3>
-                    <div className={`text-3xl font-bold ${card.textColor}`}>
-                      <AnimatedCounter
-                        value={card.value}
-                        suffix={card.suffix}
-                      />
-                    </div>
-                    <p className="text-gray-500 text-sm">{card.description}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </motion.div>
+                {stat.value}
+              </div>
+              <p className="mt-2 text-sm text-slate-400">{stat.detail}</p>
+            </CardContent>
+          </Card>
         ))}
-      </motion.div>
+      </div>
 
-      {/* Environmental Impact Section */}
-      <motion.div
-        variants={itemVariants}
-        className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8"
-      >
-        {/* Weekly Progress */}
-        <Card
-          className="border-0 bg-slate-800/50 backdrop-blur-sm"
-          style={{ backgroundColor: "rgb(15, 23, 42)" }}
-        >
+      {classifications.length === 0 && pickups.length === 0 && (
+        <p className="rounded-lg border border-slate-700 bg-slate-800/50 p-4 text-gray-300">
+          No waste classifications or pickup requests are recorded for your
+          account yet.
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card className={cardStyle}>
           <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Target className="w-5 h-5" />
-              Weekly Progress
+            <CardTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              Recent activity
             </CardTitle>
-            <CardDescription className="text-gray-400">
-              Your waste segregation goal for this week
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-400">
-                {stats.totalWasteSegregated} / {stats.monthlyGoal} items
-              </span>
-              <span className="text-green-400 font-medium">
-                {stats.weeklyProgress}%
-              </span>
-            </div>
-            <Progress
-              value={stats.weeklyProgress}
-              className="h-3 bg-slate-700"
-            />
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <TrendingUp className="w-4 h-4 text-green-400" />
-              You're ahead of schedule! Keep it up.
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Environmental Impact */}
-        <Card
-          className="border-0 bg-slate-800/50 backdrop-blur-sm"
-          style={{ backgroundColor: "rgb(15, 23, 42)" }}
-        >
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Globe className="w-5 h-5" />
-              Environmental Impact
-            </CardTitle>
-            <CardDescription className="text-gray-400">
-              Your positive contribution to the planet
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-400">
-                  <AnimatedCounter value={stats.co2Saved} suffix=" kg" />
-                </div>
-                <p className="text-sm text-gray-400">CO₂ Saved</p>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-400">
-                  <AnimatedCounter value={156} suffix="L" />
-                </div>
-                <p className="text-sm text-gray-400">Water Saved</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <Zap className="w-4 h-4 text-yellow-400" />
-              Equivalent to powering a home for 3.2 days
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* Quick Actions */}
-      <motion.div variants={itemVariants}>
-        <Card
-          className="border-0 bg-slate-800/50 backdrop-blur-sm"
-          style={{ backgroundColor: "rgb(15, 23, 42)" }}
-        >
-          <CardHeader>
-            <CardTitle className="text-white">Quick Actions</CardTitle>
-            <CardDescription className="text-gray-400">
-              Common tasks and features
+            <CardDescription className="text-slate-400">
+              Classifications created in the last 7 days, based on their
+              recorded timestamps.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                {
-                  title: "Scan Waste",
-                  description: "Classify new item",
-                  icon: Camera,
-                  color: "from-green-500 to-emerald-600",
-                  href: "/scan",
-                },
-                {
-                  title: "Assessment",
-                  description: "Eco readiness",
-                  icon: Target,
-                  color: "from-teal-500 to-cyan-600",
-                  href: "/assessment",
-                },
-                {
-                  title: "Find Centers",
-                  description: "Recycling locations",
-                  icon: MapPin,
-                  color: "from-blue-500 to-cyan-600",
-                  href: "/centers",
-                },
-                {
-                  title: "View Rewards",
-                  description: "Redeem points",
-                  icon: Award,
-                  color: "from-purple-500 to-violet-600",
-                  href: "/rewards",
-                },
-                {
-                  title: "Analytics",
-                  description: "View reports",
-                  icon: BarChart3,
-                  color: "from-orange-500 to-red-600",
-                  href: "/analytics",
-                },
-              ].map((action, index) => (
-                <motion.div
-                  key={action.title}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
+            <p className="text-4xl font-bold tracking-tight text-emerald-300">
+              {recentClassifications}
+            </p>
+            <p className="mt-1 text-sm text-slate-400">
+              of {classifications.length} recorded classifications
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className={cardStyle}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="h-5 w-5" />
+              Environmental impact
+            </CardTitle>
+            <CardDescription className="text-slate-400">
+              Recorded activity only. The schema does not provide measured
+              weights or environmental conversion factors.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-gray-200">
+              CO₂ and other environmental savings:{" "}
+              <span className="font-semibold text-slate-100">Unavailable</span>
+            </p>
+            <div className="flex flex-wrap gap-2 text-sm text-slate-300">
+              {pickupStatuses.map(({ status, count }) => (
+                <span
+                  key={status}
+                  className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5 capitalize"
                 >
-                  <Button
-                    variant="ghost"
-                    className="h-auto p-4 w-full justify-start text-left bg-slate-700/30 hover:bg-slate-700/50 border border-slate-600/30 hover:border-slate-500/50 transition-all duration-300"
-                    onClick={() => (window.location.href = action.href)}
-                  >
-                    <div className="flex items-center gap-3 w-full">
-                      <div
-                        className={`p-2 rounded-lg bg-gradient-to-br ${action.color} shadow-lg`}
-                      >
-                        <action.icon className="w-5 h-5 text-white" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-white text-sm">
-                          {action.title}
-                        </h4>
-                        <p className="text-xs text-gray-400">
-                          {action.description}
-                        </p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-gray-400" />
-                    </div>
-                  </Button>
-                </motion.div>
+                  {status}{" "}
+                  <span className="ml-1 font-semibold text-white">{count}</span>
+                </span>
               ))}
             </div>
           </CardContent>
         </Card>
-      </motion.div>
+      </div>
 
-      {/* Community Section */}
-      <motion.div variants={itemVariants}>
-        <Card
-          className="border-0 bg-slate-800/50 backdrop-blur-sm"
-          style={{ backgroundColor: "rgb(15, 23, 42)" }}
-        >
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Users className="w-5 h-5" />
-              Community Impact
-            </CardTitle>
-            <CardDescription className="text-gray-400">
-              Together we're making a difference
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-blue-400 mb-2">
-                  <AnimatedCounter value={1247} />
-                </div>
-                <p className="text-gray-400">Active Users</p>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-green-400 mb-2">
-                  <AnimatedCounter value={15680} suffix=" kg" />
-                </div>
-                <p className="text-gray-400">Total Waste Sorted</p>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-purple-400 mb-2">
-                  <AnimatedCounter value={89} suffix="%" />
-                </div>
-                <p className="text-gray-400">Accuracy Rate</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
+      <Card className={cardStyle}>
+        <CardHeader>
+          <CardTitle>Get started</CardTitle>
+          <CardDescription className="text-slate-400">
+            Continue with an assessment or record a new waste classification.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Link to="/assessment">
+            <Button className="h-12 w-full bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-400">
+              <Target className="mr-2 h-4 w-4" />
+              Start Assessment
+              <ChevronRight className="ml-auto h-4 w-4" />
+            </Button>
+          </Link>
+          <Link to="/scan">
+            <Button
+              variant="outline"
+              className="h-12 w-full border-slate-600 bg-slate-950/30 transition hover:border-emerald-400/40 hover:bg-emerald-500/10"
+            >
+              <Camera className="mr-2 h-4 w-4" />
+              Scan Waste
+              <ChevronRight className="ml-auto h-4 w-4" />
+            </Button>
+          </Link>
+          <Button
+            variant="outline"
+            className="h-12 w-full border-slate-600 bg-slate-950/20 transition hover:border-violet-300/40 hover:bg-violet-300/10 sm:col-span-2"
+            onClick={() => setShowQRModal(true)}
+          >
+            View QR Code
+          </Button>
+        </CardContent>
+      </Card>
 
-      {/* QR Code Modal */}
       {showQRModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowQRModal(false)}>
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.8, opacity: 0 }}
-            className="bg-slate-800 rounded-xl p-6 max-w-md w-full mx-4 relative"
-            onClick={(e) => e.stopPropagation()}
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setShowQRModal(false)}
+        >
+          <div
+            className="relative rounded-xl bg-slate-800 p-6"
+            onClick={(event) => event.stopPropagation()}
           >
             <button
+              aria-label="Close QR code"
+              className="absolute right-4 top-4 text-gray-400 hover:text-white"
               onClick={() => setShowQRModal(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
             >
-              <X className="w-6 h-6" />
+              <X className="h-6 w-6" />
             </button>
-
-            <div className="text-center">
-              <h3 className="text-xl font-semibold text-white mb-4">Your QR Code</h3>
-              <p className="text-gray-400 text-sm mb-6">Show this QR code at recycling centers</p>
-
-              <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-purple-200 inline-block">
-                <img
-  src="https://i.postimg.cc/0Qt3BMFh/Screenshot-2026-01-22-200202.png"
-  alt="QR Code"
-  className="w-64 h-64"
-/>
-              </div>
-
-              <div className="mt-6 p-4 bg-purple-500/10 border border-purple-500/20 rounded-lg">
-                <div className="flex items-center justify-center gap-2">
-                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
-                  <span className="text-purple-400 font-medium">QR Code Ready</span>
-                </div>
-              </div>
-            </div>
-          </motion.div>
+            <h2 className="mb-4 pr-8 text-xl font-semibold text-white">
+              Your QR Code
+            </h2>
+            <img
+              src="https://i.postimg.cc/0Qt3BMFh/Screenshot-2026-01-22-200202.png"
+              alt="QR Code"
+              className="h-64 w-64 rounded bg-white p-2"
+            />
+          </div>
         </div>
       )}
     </motion.div>

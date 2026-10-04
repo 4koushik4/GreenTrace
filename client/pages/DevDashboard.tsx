@@ -1,7 +1,7 @@
 /**
  * Developer Dashboard — God Mode
  * Full CRUD for all admin roles, state-wise user listing, system overview.
- * Only accessible after logging in with INDIA/BHARAT credentials.
+ * Only accessible to authenticated, active super_admin accounts.
  */
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";

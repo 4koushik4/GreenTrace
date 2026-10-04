@@ -30,23 +30,27 @@ const PRICES: Record<MaterialType, number> = {
 };
 
 export function getPriceQuote(material: MaterialType, weight: number) {
-  return Math.round(PRICES[material] * weight);
+  return Math.round(getUnitPrice(material) * weight);
 }
-export function getUnitPrice(material: string) {
-  switch (material) {
-    case "plastic": return 15;
-    case "paper": return 10;
-    case "metal": return 25;
-    case "glass": return 12;
-    case "e-waste": return 30;
-    default: return 8;
+
+export function getUnitPrice(material: MaterialType): number {
+  return PRICES[material];
+}
+
+export async function createBuybackOrder(order: {
+  user_id: string;
+  material_type: MaterialType;
+  weight_kg: number;
+}) {
+  if (!supabase) {
+    throw new Error("Supabase must be configured to create a buy-back order.");
   }
-}
+  if (!Number.isFinite(order.weight_kg) || order.weight_kg <= 0) {
+    throw new Error("Weight must be greater than zero.");
+  }
 
-
-export async function createBuybackOrder(order) {
   const unitPrice = getUnitPrice(order.material_type);
-  const total = unitPrice * order.weight_kg;
+  const total = getPriceQuote(order.material_type, order.weight_kg);
 
   const { data, error } = await supabase
     .from("buyback_orders")
@@ -56,8 +60,8 @@ export async function createBuybackOrder(order) {
       weight_kg: order.weight_kg,
       unit_price: unitPrice,
       total_amount: total,
-      status: "quote",        // ✅ MUST match constraint
-      payment_received: false
+      status: "quote",
+      payment_received: false,
     })
     .select()
     .single();
@@ -65,7 +69,6 @@ export async function createBuybackOrder(order) {
   if (error) throw error;
   return data;
 }
-
 
 export async function listBuybackOrders(userId: string) {
   const { data, error } = await supabase

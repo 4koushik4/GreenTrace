@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
 import {
@@ -23,9 +23,21 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import {
   useAuth as useSbAuth,
-  useUserProfile as useSbProfile,
   supabase,
 } from "@/lib/supabase";
+import {
+  calculateVoucherValue,
+  voucherCategories,
+  type Voucher,
+  type VoucherRedemption,
+  type UserTransaction,
+} from "@/lib/vouchers";
+import {
+  fetchVouchers,
+  getUserRedemptionsReal,
+  getUserTransactionsReal,
+  redeemVoucherReal,
+} from "@/lib/voucher-operations";
 import {
   Coins,
   Gift,
@@ -46,181 +58,6 @@ import {
   Heart,
   Trophy,
 } from "lucide-react";
-
-// Mock voucher data and types
-interface Voucher {
-  id: string;
-  title: string;
-  brand: string;
-  description: string;
-  pointsRequired: number;
-  category: string;
-  image: string;
-  logo: string;
-  color: string;
-  validityDays: number;
-  currentStock?: number;
-  isActive: boolean;
-  value: string;
-}
-
-interface VoucherRedemption {
-  id: string;
-  userId: string;
-  voucherId: string;
-  voucherCode: string;
-  pointsUsed: number;
-  status: "active" | "used" | "expired";
-  redeemedAt: string;
-  expiresAt: string;
-  voucher?: Voucher;
-}
-
-interface UserTransaction {
-  id: string;
-  userId: string;
-  type: "earned" | "redeemed" | "bonus";
-  points: number;
-  description: string;
-  metadata?: any;
-  createdAt: string;
-}
-
-// Mock data
-type Category = { title: string; icon: string };
-const voucherCategories: Record<string, Category> = {
-  food: { title: "Food & Dining", icon: "🍕" },
-  shopping: { title: "Shopping", icon: "🛍️" },
-  entertainment: { title: "Entertainment", icon: "🎬" },
-  transport: { title: "Transport", icon: "🚗" },
-  health: { title: "Health & Wellness", icon: "💊" },
-  eco: { title: "Eco-Friendly", icon: "🌱" },
-};
-
-const mockVouchers: Voucher[] = [
-  {
-    id: "v1",
-    title: "20% Off All Items",
-    brand: "Amazon",
-    description:
-      "Get 20% discount on your next purchase. Valid on electronics, books, and home items.",
-    pointsRequired: 500,
-    category: "shopping",
-    image:
-      "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400&h=200&fit=crop",
-    logo: "https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg",
-    color: "#FF9900",
-    validityDays: 30,
-    currentStock: 50,
-    isActive: true,
-    value: "₹200 OFF",
-  },
-  {
-    id: "v2",
-    title: "Free Coffee & Pastry",
-    brand: "Starbucks",
-    description:
-      "Enjoy a complimentary coffee of your choice with a fresh pastry.",
-    pointsRequired: 300,
-    category: "food",
-    image:
-      "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&h=200&fit=crop",
-    logo: "https://upload.wikimedia.org/wikipedia/en/d/d3/Starbucks_Corporation_Logo_2011.svg",
-    color: "#00704A",
-    validityDays: 15,
-    currentStock: 25,
-    isActive: true,
-    value: "FREE ITEM",
-  },
-  {
-    id: "v3",
-    title: "Movie Ticket BOGO",
-    brand: "PVR Cinemas",
-    description:
-      "Buy one movie ticket and get one free. Valid for all shows except premieres.",
-    pointsRequired: 800,
-    category: "entertainment",
-    image:
-      "https://images.unsplash.com/photo-1489599904472-af1a1b851186?w=400&h=200&fit=crop",
-    logo: "https://via.placeholder.com/40x40/000000/FFFFFF?text=PVR",
-    color: "#E50914",
-    validityDays: 45,
-    currentStock: 15,
-    isActive: true,
-    value: "BOGO",
-  },
-  {
-    id: "v4",
-    title: "₹100 Off Ride",
-    brand: "Uber",
-    description:
-      "Get ₹100 off your next Uber ride. Valid for rides above ₹200.",
-    pointsRequired: 200,
-    category: "transport",
-    image:
-      "https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?w=400&h=200&fit=crop",
-    logo: "https://via.placeholder.com/40x40/000000/FFFFFF?text=UBER",
-    color: "#000000",
-    validityDays: 7,
-    currentStock: 100,
-    isActive: true,
-    value: "₹100 OFF",
-  },
-  {
-    id: "v5",
-    title: "Eco-Friendly Kit",
-    brand: "GreenLife",
-    description:
-      "Complete eco-friendly starter kit with bamboo products and reusable bags.",
-    pointsRequired: 1000,
-    category: "eco",
-    image:
-      "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=400&h=200&fit=crop",
-    logo: "https://via.placeholder.com/40x40/22C55E/FFFFFF?text=GL",
-    color: "#22C55E",
-    validityDays: 60,
-    currentStock: 8,
-    isActive: true,
-    value: "FREE KIT",
-  },
-  {
-    id: "v6",
-    title: "30% Off Health Products",
-    brand: "HealthKart",
-    description:
-      "Get 30% discount on all health supplements and wellness products.",
-    pointsRequired: 600,
-    category: "health",
-    image:
-      "https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=400&h=200&fit=crop",
-    logo: "https://via.placeholder.com/40x40/059669/FFFFFF?text=HK",
-    color: "#059669",
-    validityDays: 30,
-    currentStock: 30,
-    isActive: true,
-    value: "30% OFF",
-  },
-];
-
-// Utility functions
-const generateVoucherCode = (brand: string): string => {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substr(2, 4).toUpperCase();
-  const brandCode = brand.substr(0, 3).toUpperCase();
-  return `${brandCode}${random}${timestamp.substr(-4)}`;
-};
-
-const calculateVoucherValue = (voucher: Voucher): string => {
-  return voucher.value;
-};
-
-const canRedeemVoucher = (voucher: Voucher, userPoints: number): boolean => {
-  return (
-    voucher.isActive &&
-    userPoints >= voucher.pointsRequired &&
-    (voucher.currentStock === undefined || voucher.currentStock > 0)
-  );
-};
 
 // Component for animated counter
 const AnimatedCounter = ({
@@ -269,9 +106,13 @@ const VoucherCard = ({
   userPoints: number;
   onRedeem: (voucher: Voucher) => void;
 }) => {
-  const canRedeem = canRedeemVoucher(voucher, userPoints);
+  const canRedeem =
+    voucher.isActive &&
+    voucher.pointsRequired !== null &&
+    userPoints >= voucher.pointsRequired &&
+    (typeof voucher.currentStock !== "number" || voucher.currentStock > 0);
   const isLowStock =
-    voucher.currentStock !== undefined && voucher.currentStock < 10;
+    typeof voucher.currentStock === "number" && voucher.currentStock < 10;
 
   return (
     <motion.div
@@ -281,26 +122,26 @@ const VoucherCard = ({
     >
       <Card className="border-0 bg-slate-800/50 backdrop-blur-sm overflow-hidden relative group">
         {/* Voucher Image */}
-        <div className="relative h-32 overflow-hidden">
-          <img
-            src={voucher.image}
-            alt={voucher.title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-          />
+        <div className="relative h-32 overflow-hidden bg-slate-700">
+          {voucher.image ? (
+            <img
+              src={voucher.image}
+              alt={voucher.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-gray-300">
+              <Gift className="w-10 h-10" />
+            </div>
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
 
           {/* Brand Logo */}
           <div className="absolute top-3 left-3">
             <div className="w-10 h-10 bg-white rounded-lg p-1.5 shadow-lg">
-              <img
-                src={voucher.logo}
-                alt={voucher.brand}
-                className="w-full h-full object-contain"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src =
-                    `https://via.placeholder.com/40x40/ffffff/000000?text=${voucher.brand.charAt(0)}`;
-                }}
-              />
+              <span className="text-slate-800 font-bold">
+                {(voucher.brand || voucher.title).charAt(0)}
+              </span>
             </div>
           </div>
 
@@ -320,13 +161,15 @@ const VoucherCard = ({
         <CardContent className="p-4">
           {/* Brand Name */}
           <div className="flex items-center justify-between mb-2">
-            <h3 className="font-bold text-white text-lg">{voucher.brand}</h3>
+            <h3 className="font-bold text-white text-lg">
+              {voucher.brand || "Provider not specified"}
+            </h3>
             <Badge
               className="text-xs px-2 py-1"
               style={{
-                backgroundColor: `${voucher.color}20`,
-                color: voucher.color,
-                border: `1px solid ${voucher.color}40`,
+                backgroundColor: `${voucher.color || "#64748B"}20`,
+                color: voucher.color || "#CBD5E1",
+                border: `1px solid ${voucher.color || "#64748B"}40`,
               }}
             >
               {calculateVoucherValue(voucher)}
@@ -338,7 +181,7 @@ const VoucherCard = ({
             {voucher.title}
           </h4>
           <p className="text-gray-400 text-xs mb-3 line-clamp-2">
-            {voucher.description}
+            {voucher.description || "Description unavailable"}
           </p>
 
           {/* Points Required */}
@@ -349,7 +192,7 @@ const VoucherCard = ({
                 className="font-bold text-lg"
                 style={{ color: canRedeem ? "#FACC15" : "#6B7280" }}
               >
-                {voucher.pointsRequired}
+                {voucher.pointsRequired ?? "Unavailable"}
               </span>
               <span className="text-gray-400 text-sm">points</span>
             </div>
@@ -357,7 +200,11 @@ const VoucherCard = ({
             {/* Validity */}
             <div className="flex items-center gap-1 text-gray-400 text-xs">
               <Calendar className="w-3 h-3" />
-              <span>{voucher.validityDays}d</span>
+              <span>
+                {voucher.validUntil
+                  ? `Until ${new Date(voucher.validUntil).toLocaleDateString()}`
+                  : "No expiry specified"}
+              </span>
             </div>
           </div>
 
@@ -379,7 +226,9 @@ const VoucherCard = ({
             ) : (
               <>
                 <AlertCircle className="w-4 h-4 mr-2" />
-                {userPoints < voucher.pointsRequired
+                {voucher.pointsRequired === null
+                  ? "Unavailable"
+                  : userPoints < voucher.pointsRequired
                   ? "Insufficient Points"
                   : "Out of Stock"}
               </>
@@ -423,23 +272,15 @@ const RedeemedVoucherCard = ({
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-white rounded-lg p-2 shadow-lg">
-              <img
-                src={redemption.voucher?.logo}
-                alt={redemption.voucher?.brand}
-                className="w-full h-full object-contain"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src =
-                    `https://via.placeholder.com/48x48/ffffff/000000?text=${redemption.voucher?.brand?.charAt(0) || "V"}`;
-                }}
-              />
+            <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-lg text-slate-800 font-bold">
+              {(redemption.voucher?.title || "R").charAt(0)}
             </div>
             <div>
               <h4 className="font-semibold text-white">
-                {redemption.voucher?.title}
+                {redemption.voucher?.title || "Reward unavailable"}
               </h4>
               <p className="text-gray-400 text-sm">
-                {redemption.voucher?.brand}
+                {redemption.voucher?.brand || "Provider not specified"}
               </p>
             </div>
           </div>
@@ -454,13 +295,14 @@ const RedeemedVoucherCard = ({
             <div>
               <p className="text-gray-400 text-xs mb-1">Voucher Code</p>
               <p className="font-mono text-white font-bold tracking-wider">
-                {redemption.voucherCode}
+                {redemption.voucherCode || "Code unavailable"}
               </p>
             </div>
             <Button
               size="sm"
               variant="ghost"
               onClick={copyVoucherCode}
+              disabled={!redemption.voucherCode}
               className="text-gray-400 hover:text-white"
             >
               {codeCopied ? (
@@ -481,7 +323,9 @@ const RedeemedVoucherCard = ({
           <div>
             <p className="text-gray-400">Expires</p>
             <p className="text-white font-semibold">
-              {new Date(redemption.expiresAt).toLocaleDateString()}
+              {redemption.expiresAt
+                ? new Date(redemption.expiresAt).toLocaleDateString()
+                : "Not specified"}
             </p>
           </div>
         </div>
@@ -491,38 +335,98 @@ const RedeemedVoucherCard = ({
 };
 
 export default function Rewards() {
-  // State management
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
   const [isRedeemDialogOpen, setIsRedeemDialogOpen] = useState(false);
   const [redemptions, setRedemptions] = useState<VoucherRedemption[]>([]);
   const [transactions, setTransactions] = useState<UserTransaction[]>([]);
   const [isRedeeming, setIsRedeeming] = useState(false);
-  const [userPoints, setUserPoints] = useState(0);
-  const [vouchers, setVouchers] = useState<Voucher[]>(mockVouchers);
+  const [userPoints, setUserPoints] = useState<number | null>(null);
+  const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [successMessage, setSuccessMessage] = useState<string>("");
+  const [itemsClassified, setItemsClassified] = useState<number | null>(null);
+  const [ecoScore, setEcoScore] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const { toast } = useToast();
-  const { user } = useSbAuth();
-  const { profile } = useSbProfile(user?.id);
+  const { user, loading: authLoading } = useSbAuth();
+
+  const loadRewardsData = useCallback(async () => {
+    if (!supabase) {
+      setDataError("Rewards are unavailable because Supabase is not configured.");
+      setLoading(false);
+      return;
+    }
+
+    if (!user?.id) {
+      setDataError(null);
+      setVouchers([]);
+      setRedemptions([]);
+      setTransactions([]);
+      setUserPoints(null);
+      setItemsClassified(null);
+      setEcoScore(null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setDataError(null);
+    try {
+      const [catalog, history, transactionHistory, profileResult, classificationResult] =
+        await Promise.all([
+          fetchVouchers(),
+          getUserRedemptionsReal(user.id),
+          getUserTransactionsReal(user.id),
+          supabase
+            .from("user_profiles")
+            .select("points, waste_classified, eco_score")
+            .eq("id", user.id)
+            .maybeSingle(),
+          supabase
+            .from("waste_classifications")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id),
+        ]);
+
+      if (profileResult.error) throw profileResult.error;
+      if (classificationResult.error) throw classificationResult.error;
+      setVouchers(catalog);
+      setRedemptions(history);
+      setTransactions(transactionHistory);
+      setUserPoints(profileResult.data?.points ?? null);
+      setItemsClassified(
+        classificationResult.count ??
+          profileResult.data?.waste_classified ??
+          null,
+      );
+      setEcoScore(profileResult.data?.eco_score ?? null);
+    } catch (error) {
+      setDataError(
+        error instanceof Error ? error.message : "Unable to load rewards data.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
-    if (profile?.points != null) setUserPoints(profile.points);
-    if (!profile) setUserPoints(2500);
-  }, [profile]);
+    if (!supabase || !authLoading) void loadRewardsData();
+  }, [authLoading, loadRewardsData]);
 
-  // Mock user data
-  const userData = {
-    points: userPoints,
-    waste_classified: 156,
-    eco_score: 85,
-    name: "EcoWarrior",
-  };
-
-  // Filter vouchers based on selected category
   const filteredVouchers =
     selectedCategory === "all"
       ? vouchers.filter((v) => v.isActive)
       : vouchers.filter((v) => v.category === selectedCategory && v.isActive);
+  const availableCategories = Array.from(
+    new Set(vouchers.map((voucher) => voucher.category)),
+  ).map((category) => ({
+    key: category,
+    title:
+      voucherCategories[category]?.title ||
+      category.replace(/[_-]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+    icon: voucherCategories[category]?.icon || "🎁",
+  }));
 
   // Handle voucher redemption
   const handleRedeemVoucher = (voucher: Voucher) => {
@@ -531,88 +435,21 @@ export default function Rewards() {
   };
 
   const confirmRedemption = async () => {
-    if (!selectedVoucher) return;
+    if (!selectedVoucher || !user?.id || userPoints === null) return;
 
     setIsRedeeming(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      if (userPoints < selectedVoucher.pointsRequired) {
-        throw new Error(
-          `Insufficient points. You need ${selectedVoucher.pointsRequired} points but only have ${userPoints}.`,
-        );
-      }
-
-      if (
-        selectedVoucher.currentStock !== undefined &&
-        selectedVoucher.currentStock <= 0
-      ) {
-        throw new Error("This voucher is currently out of stock.");
-      }
-
-      const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-      const voucherCode = `ECO-${rand}`;
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + selectedVoucher.validityDays);
-
-      const redemption: VoucherRedemption = {
-        id: `red_${Date.now()}`,
-        userId: user?.id || "user123",
-        voucherId: selectedVoucher.id,
-        voucherCode,
-        pointsUsed: selectedVoucher.pointsRequired,
-        status: "active",
-        redeemedAt: new Date().toISOString(),
-        expiresAt: expiresAt.toISOString(),
-        voucher: selectedVoucher,
-      };
-
-      const transaction: UserTransaction = {
-        id: `txn_${Date.now()}`,
-        userId: user?.id || "user123",
-        type: "redeemed",
-        points: -selectedVoucher.pointsRequired,
-        description: `Redeemed: ${selectedVoucher.title}`,
-        metadata: {
-          voucherCode,
-          brand: selectedVoucher.brand,
-          category: selectedVoucher.category,
-        },
-        createdAt: new Date().toISOString(),
-      };
-
-      setRedemptions((prev) => [redemption, ...prev]);
-      setTransactions((prev) => [transaction, ...prev]);
-      setUserPoints((prev) => prev - selectedVoucher.pointsRequired);
-
-      setVouchers((prev) =>
-        prev.map((v) =>
-          v.id === selectedVoucher.id
-            ? { ...v, currentStock: (v.currentStock || 0) - 1 }
-            : v,
-        ),
-      );
-
-      if (supabase && user?.id) {
-        try {
-          await supabase
-            .from("user_profiles")
-            .update({
-              points: Math.max(
-                0,
-                (profile?.points || 0) - selectedVoucher.pointsRequired,
-              ),
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", user.id);
-        } catch {}
-      }
+      const redemption = await redeemVoucherReal(selectedVoucher.id, user.id);
+      await loadRewardsData();
 
       setIsRedeemDialogOpen(false);
       setSelectedVoucher(null);
-      toast({ title: "Reward redeemed", description: `Code: ${voucherCode}` });
+      toast({
+        title: "Reward redeemed",
+        description: `Code: ${redemption.voucherCode}`,
+      });
       setSuccessMessage(
-        `🎉 Successfully redeemed ${selectedVoucher.title}! Your voucher code: ${voucherCode}`,
+        `🎉 Successfully redeemed ${selectedVoucher.title}! Your voucher code: ${redemption.voucherCode}`,
       );
       setTimeout(() => setSuccessMessage(""), 5000);
     } catch (error) {
@@ -685,6 +522,26 @@ export default function Rewards() {
           </div>
         </motion.div>
 
+        {loading && (
+          <div className="py-8 text-center text-gray-300" role="status">
+            Loading your rewards…
+          </div>
+        )}
+        {!loading && authLoading === false && !user && (
+          <Alert className="border-amber-500/40 bg-amber-500/10 text-amber-200">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Sign in to view your points, vouchers, and redemption history.
+            </AlertDescription>
+          </Alert>
+        )}
+        {dataError && (
+          <Alert className="border-red-500/40 bg-red-500/10 text-red-200">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{dataError}</AlertDescription>
+          </Alert>
+        )}
+
         {/* Eco-Points Balance Section */}
         <motion.div variants={itemVariants}>
           <Card className="border-0 bg-gradient-to-br from-amber-500/10 to-yellow-600/20 backdrop-blur-sm mb-8">
@@ -699,7 +556,7 @@ export default function Rewards() {
                 </motion.div>
                 <div>
                   <h2 className="text-4xl font-bold text-amber-400 mb-2">
-                    <AnimatedCounter value={userPoints} />
+                    {userPoints === null ? "—" : <AnimatedCounter value={userPoints} />}
                   </h2>
                   <p className="text-gray-300 text-lg">Available Eco-Points</p>
                 </div>
@@ -708,19 +565,19 @@ export default function Rewards() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
                 <div className="text-center">
                   <div className="text-2xl font-bold text-green-400 mb-1">
-                    <AnimatedCounter value={redemptions.length} />
+                    {loading ? "—" : <AnimatedCounter value={redemptions.length} />}
                   </div>
                   <p className="text-gray-400 text-sm">Vouchers Redeemed</p>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-blue-400 mb-1">
-                    <AnimatedCounter value={userData.waste_classified} />
+                    {itemsClassified === null ? "—" : <AnimatedCounter value={itemsClassified} />}
                   </div>
                   <p className="text-gray-400 text-sm">Items Classified</p>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-purple-400 mb-1">
-                    <AnimatedCounter value={userData.eco_score} />
+                    {ecoScore === null ? "—" : <AnimatedCounter value={ecoScore} />}
                   </div>
                   <p className="text-gray-400 text-sm">Eco Score</p>
                 </div>
@@ -771,15 +628,13 @@ export default function Rewards() {
                 >
                   All Categories
                 </Button>
-                {(
-                  Object.entries(voucherCategories) as [string, Category][]
-                ).map(([key, category]) => (
+                {availableCategories.map((category) => (
                   <Button
-                    key={key}
-                    variant={selectedCategory === key ? "default" : "outline"}
-                    onClick={() => setSelectedCategory(key)}
+                    key={category.key}
+                    variant={selectedCategory === category.key ? "default" : "outline"}
+                    onClick={() => setSelectedCategory(category.key)}
                     className={`${
-                      selectedCategory === key
+                      selectedCategory === category.key
                         ? "bg-red-600 text-white"
                         : "bg-slate-800/50 text-gray-300 hover:text-white"
                     }`}
@@ -802,14 +657,14 @@ export default function Rewards() {
                   >
                     <VoucherCard
                       voucher={voucher}
-                      userPoints={userPoints}
+                      userPoints={userPoints ?? 0}
                       onRedeem={handleRedeemVoucher}
                     />
                   </motion.div>
                 ))}
               </motion.div>
 
-              {filteredVouchers.length === 0 && (
+              {!loading && !dataError && filteredVouchers.length === 0 && (
                 <div className="text-center py-12">
                   <Gift className="w-16 h-16 mx-auto mb-4 text-gray-400" />
                   <h3 className="text-xl font-semibold text-white mb-2">
@@ -824,7 +679,11 @@ export default function Rewards() {
 
             {/* My Vouchers Tab */}
             <TabsContent value="my-vouchers" className="space-y-6">
-              {redemptions.length > 0 ? (
+              {loading ? (
+                <p className="py-8 text-center text-gray-400">Loading your vouchers…</p>
+              ) : dataError ? (
+                <p className="py-8 text-center text-red-300">{dataError}</p>
+              ) : redemptions.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {redemptions.map((redemption) => (
                     <RedeemedVoucherCard
@@ -865,7 +724,11 @@ export default function Rewards() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {transactions.length > 0 ? (
+                  {loading ? (
+                    <p className="py-8 text-center text-gray-400">Loading your transaction history…</p>
+                  ) : dataError ? (
+                    <p className="py-8 text-center text-red-300">{dataError}</p>
+                  ) : transactions.length > 0 ? (
                     <div className="space-y-4">
                       {transactions.map((transaction) => (
                         <div
@@ -939,13 +802,13 @@ export default function Rewards() {
                                     0 && (
                                     <div className="mt-2 pt-2 border-t border-slate-600/30">
                                       <div className="grid grid-cols-2 gap-2 text-xs">
-                                        {transaction.metadata.voucherCode && (
+                                        {(transaction.metadata.voucherCode || transaction.metadata.voucher_code) && (
                                           <div>
                                             <span className="text-gray-400">
                                               Voucher Code:
                                             </span>
                                             <span className="text-white font-mono ml-2">
-                                              {transaction.metadata.voucherCode}
+                                              {transaction.metadata.voucherCode || transaction.metadata.voucher_code}
                                             </span>
                                           </div>
                                         )}
@@ -1043,28 +906,28 @@ export default function Rewards() {
               <div className="bg-slate-700/50 rounded-lg p-4">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-12 h-12 bg-white rounded-lg p-2">
-                    <img
-                      src={selectedVoucher.logo}
-                      alt={selectedVoucher.brand}
-                      className="w-full h-full object-contain"
-                    />
+                    <span className="text-slate-800 font-bold">
+                      {(selectedVoucher.brand || selectedVoucher.title).charAt(0)}
+                    </span>
                   </div>
                   <div>
                     <h4 className="font-semibold text-white">
                       {selectedVoucher.title}
                     </h4>
-                    <p className="text-gray-400">{selectedVoucher.brand}</p>
+                    <p className="text-gray-400">
+                      {selectedVoucher.brand || "Provider not specified"}
+                    </p>
                   </div>
                 </div>
                 <p className="text-gray-300 text-sm">
-                  {selectedVoucher.description}
+                  {selectedVoucher.description || "Description unavailable"}
                 </p>
               </div>
 
               <div className="flex items-center justify-between p-4 bg-amber-500/10 rounded-lg">
                 <span className="text-gray-300">Points Required:</span>
                 <span className="text-amber-400 font-bold text-lg">
-                  {selectedVoucher.pointsRequired}
+                  {selectedVoucher.pointsRequired ?? "Unavailable"}
                 </span>
               </div>
 

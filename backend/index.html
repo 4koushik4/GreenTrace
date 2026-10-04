@@ -212,12 +212,15 @@ imageInput.addEventListener("change", async function(){
   formData.append("image", file);
 
   try{
-    const res = await fetch("http://localhost:5000/predict",{
+    const res = await fetch("/predict",{
       method:"POST",
       body:formData
     });
 
     const data = await res.json();
+    if(!res.ok){
+      throw new Error(data.error || `Prediction failed (${res.status})`);
+    }
 
     const className = data.class_name?.trim().toLowerCase();
 
@@ -228,14 +231,13 @@ imageInput.addEventListener("change", async function(){
 
     itemClass.innerText = className;
     detailClass.innerText = disposalInstructions[className].category;
-    confidence.innerText = data.confidence || "N/A";
+    confidence.innerText = typeof data.confidence === "number" ? data.confidence : "N/A";
     instructionEl.innerText = disposalInstructions[className].text;
 
     resultBox.style.display="block";
 
   }catch(err){
-    alert("API error");
-    console.error(err);
+    alert(err instanceof Error ? err.message : "The classification service is unavailable.");
   }
 });
 
