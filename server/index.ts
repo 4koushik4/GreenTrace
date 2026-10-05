@@ -72,7 +72,7 @@ Rules: Be short and helpful. Use emojis sparingly. You are NOT ChatGPT — you a
             Authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
-            model: "llama-3.1-8b-instant",
+            model: "openai/gpt-oss-20b",
             messages: chatMessages,
             temperature: 0.7,
             max_tokens: 1024,
