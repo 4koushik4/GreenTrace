@@ -16,7 +16,7 @@ export type ClassificationResult = {
   materialKey: string;
   category: string;
   categoryKey: WasteCategoryKey;
-  classification: "biodegradable" | "recyclable" | "hazardous" | "non-recyclable";
+  classification: "biodegradable" | "recyclable" | "hazardous" | "non_biodegradable";
   confidence: number;
   predictions: WasteDetection[];
   processingTime?: number;

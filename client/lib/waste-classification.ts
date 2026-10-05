@@ -14,7 +14,7 @@ export const MATERIAL_CATEGORY_MAP = {
 export const WASTE_CATEGORY_DETAILS = {
   biodegradable: { label: "Biodegradable", classification: "biodegradable" },
   recyclable: { label: "Recyclable", classification: "recyclable" },
-  non_biodegradable: { label: "Non-Biodegradable", classification: "non-recyclable" },
+  non_biodegradable: { label: "Non-Biodegradable", classification: "non_biodegradable" },
   hazardous: { label: "Hazardous", classification: "hazardous" },
 } as const;
 
