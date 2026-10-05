@@ -13,20 +13,28 @@ import { useAuth } from "@/lib/supabase";
 
 const WasteClassification: React.FC = () => {
   const { user } = useAuth();
-  const { classifyWaste, loading, modelReady } = useWasteClassification();
+  const { classifyWaste, loading, modelReady, phase } = useWasteClassification();
   const [result, setResult] = useState<ClassificationResult | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
 
   const classifyFile = async (file?: File) => {
     if (!file) return;
     const validation = validateImageForClassification(file);
     if (!validation.isValid) {
+      setSelectedFile(null);
+      setResult(null);
+      setImageUrl(null);
+      setSaveNotice(null);
       setError(validation.error);
       return;
     }
 
+    setSelectedFile(file);
+    setCanRetry(false);
     setError(null);
     setSaveNotice(null);
     setResult(null);
@@ -40,12 +48,14 @@ const WasteClassification: React.FC = () => {
           await persistWasteClassification(prediction, user.id);
           setSaveNotice("Classification saved to your account.");
         } catch (saveError) {
+          setCanRetry(false);
           setError(saveError instanceof Error ? saveError.message : "Classification could not be saved.");
         }
       } else {
         setSaveNotice("Sign in to save classifications to your account.");
       }
     } catch (classificationError) {
+      setCanRetry(true);
       setError(
         classificationError instanceof Error
           ? classificationError.message
@@ -75,12 +85,11 @@ const WasteClassification: React.FC = () => {
         <CardContent className="grid gap-6 p-6 md:grid-cols-2">
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Classification uses the configured application API. If the model or backend is unavailable,
-              no prediction will be shown.
+              Upload or capture a JPG, PNG, or WEBP image to identify the material and its GreenTrace waste category.
             </p>
             <Input
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/jpeg,.jpg,.jpeg,image/png,.png,image/webp,.webp"
               onChange={(event) => {
                 void classifyFile(event.target.files?.[0]);
                 event.currentTarget.value = "";
@@ -89,8 +98,13 @@ const WasteClassification: React.FC = () => {
             />
             {loading && (
               <p className="text-sm text-muted-foreground" role="status">
-                Sending image to the classification model…
+                {phase === "preparing_image" ? "Preparing image…" : phase === "scanning" ? "Sending image to Roboflow…" : "Analyzing waste…"}
               </p>
+            )}
+            {error && selectedFile && canRetry && !loading && (
+              <Button variant="outline" onClick={() => void classifyFile(selectedFile)}>
+                Retry analysis
+              </Button>
             )}
             {error && (
               <p className="text-sm text-red-600" role="alert">
@@ -116,11 +130,12 @@ const WasteClassification: React.FC = () => {
             )}
             {result && (
               <div className="space-y-3" aria-live="polite">
+                <p className="text-sm font-medium">Detected material: {result.material}</p>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="capitalize">{result.detailedClass}</Badge>
-                  <Badge className="capitalize">{result.category}</Badge>
+                  <Badge variant="outline">{result.material}</Badge>
+                  <Badge>{result.category}</Badge>
                   <span className="ml-auto text-sm text-muted-foreground">
-                    {result.confidence}% confidence
+                    {Math.round(result.confidence * 100)}% confidence
                   </span>
                 </div>
                 {result.disposalMethod && (
@@ -136,6 +151,8 @@ const WasteClassification: React.FC = () => {
                   onClick={() => {
                     setResult(null);
                     setImageUrl(null);
+                    setSelectedFile(null);
+                    setCanRetry(false);
                     setError(null);
                     setSaveNotice(null);
                   }}

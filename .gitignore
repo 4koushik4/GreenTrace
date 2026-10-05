@@ -11,6 +11,7 @@ node_modules/
 # Env
 .env
 .env.local
+.env.*.local
 
 # Build
 dist/

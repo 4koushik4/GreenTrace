@@ -261,7 +261,8 @@ export default function Index() {
       const result = await classifyWaste(file);
       setClassificationResult({
         ...result,
-        pointsEarned: config.defaults.pointsPerClassification[result.category as keyof typeof config.defaults.pointsPerClassification] || 10
+        type: result.categoryKey,
+        pointsEarned: config.defaults.pointsPerClassification[result.classification as keyof typeof config.defaults.pointsPerClassification] || 10
       });
     } catch (error) {
       console.error("Classification failed:", error);
@@ -688,7 +689,7 @@ export default function Index() {
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept="image/*"
+                        accept="image/jpeg,image/png,image/webp"
                         onChange={handleFileUpload}
                         className="hidden"
                       />
@@ -769,10 +770,13 @@ export default function Index() {
                                         classificationResult.type === 'biodegradable' ? 'bg-green-500' :
                                         'bg-red-500'
                                       } text-white border-0 shadow-md`}>
-                                        ✓ {classificationResult.type.toUpperCase()}
+                                        ✓ {classificationResult.category}
                                       </Badge>
                                       <div className="mt-2 text-sm text-slate-600">
-                                        Confidence: {classificationResult.confidence}%
+                                        Detected material: {classificationResult.material}
+                                      </div>
+                                      <div className="text-sm text-slate-600">
+                                        Confidence: {Math.round(classificationResult.confidence * 100)}%
                                       </div>
                                     </motion.div>
                                     
@@ -782,7 +786,7 @@ export default function Index() {
                                       animate={{ opacity: 1, y: 0 }}
                                       transition={{ delay: 0.5 }}
                                     >
-                                      {classificationResult.details?.recommendations?.map((rec: string, idx: number) => (
+                                      {classificationResult.tips?.map((rec: string, idx: number) => (
                                         <div key={idx} className="flex items-start gap-2 text-sm text-slate-700">
                                           <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
                                           <span>{rec}</span>

@@ -50,6 +50,7 @@ import { ThemeProvider } from "./components/ThemeProvider";
 import { useAuth as useSupabaseAuth } from "@/lib/supabase";
 import { validateConfig } from "@/lib/config";
 import { AdminAuthProvider } from "@/lib/admin-auth";
+import ChatAssistant from "./components/ChatAssistant";
 
 const queryClient = new QueryClient();
 
@@ -485,6 +486,7 @@ const App = () => {
                 {/* Catch all route */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              <ChatAssistant />
             </BrowserRouter>
           </TooltipProvider>
         </ThemeProvider>

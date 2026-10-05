@@ -93,8 +93,7 @@ const ARScanner: React.FC = () => {
             Camera Waste Scanner
           </CardTitle>
           <p className="text-muted-foreground">
-            Capture an image and send it to the configured waste-classification service.
-            No result is shown unless the service returns a supported classification.
+            Capture an image to identify its material and GreenTrace waste category.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -138,15 +137,17 @@ const ARScanner: React.FC = () => {
             )}
           </div>
 
+          {loading && <p role="status" className="text-sm text-muted-foreground">Analyzing waste…</p>}
           {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
 
           {result && (
             <div className="space-y-3 rounded-lg border p-4" aria-live="polite">
+              <p className="text-sm font-medium">Detected material: {result.material}</p>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="capitalize">{result.detailedClass}</Badge>
-                <Badge className="capitalize">{result.category}</Badge>
+                <Badge variant="outline">{result.material}</Badge>
+                <Badge>{result.category}</Badge>
                 <span className="ml-auto text-sm text-muted-foreground">
-                  {result.confidence}% confidence
+                  {Math.round(result.confidence * 100)}% confidence
                 </span>
               </div>
               {result.disposalMethod && (
