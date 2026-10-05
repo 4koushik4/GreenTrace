@@ -1,122 +1,127 @@
 import { useCallback, useState } from "react";
 import { config } from "./config";
 import { supabase } from "./supabase";
-
-const PREDICTION_URL = "https://greentrace-wbqx.onrender.com/predict";
+import {
+  predictWaste,
+  RoboflowPredictionError,
+  ROBOFLOW_CONFIDENCE_THRESHOLD,
+  type PredictionPhase,
+  type WasteDetection,
+} from "./roboflow";
+import { getWasteCategory, type WasteCategoryKey } from "./waste-classification";
 
 export type ClassificationResult = {
   detailedClass: string;
-  category: "organic" | "recyclable" | "non-recyclable";
+  material: string;
+  materialKey: string;
+  category: string;
+  categoryKey: WasteCategoryKey;
+  classification: "biodegradable" | "recyclable" | "hazardous" | "non-recyclable";
   confidence: number;
+  predictions: WasteDetection[];
   processingTime?: number;
   tips?: string[];
   disposalMethod?: string;
 };
 
-type WasteClassInfo = {
-  category: ClassificationResult["category"];
-  tips: string[];
-  disposalMethod: string;
-};
+export type ClassificationErrorStatus = "low_confidence" | "no_detection" | "api_error" | "network_error" | "timeout" | "invalid_image" | "missing_api_key";
 
-const WASTE_CLASS_INFO: Record<string, WasteClassInfo> = {
-  organic: { category: "organic", tips: ["Compost properly"], disposalMethod: "Compost bin" },
-  cardboard: { category: "recyclable", tips: ["Flatten boxes"], disposalMethod: "Recycle bin" },
-  glass: { category: "recyclable", tips: ["Rinse bottles"], disposalMethod: "Recycle bin" },
-  metal: { category: "recyclable", tips: ["Crush cans"], disposalMethod: "Recycle bin" },
-  paper: { category: "recyclable", tips: ["Keep dry"], disposalMethod: "Recycle bin" },
-  plastic: { category: "recyclable", tips: ["Rinse containers"], disposalMethod: "Recycle bin" },
-  trash: { category: "non-recyclable", tips: ["Dispose safely"], disposalMethod: "Landfill" },
-};
-
-type PredictionResponse = {
-  class?: unknown;
-  class_name?: unknown;
-  confidence?: unknown;
-  processingTime?: unknown;
-  error?: unknown;
-  message?: unknown;
-  details?: unknown;
-};
-
-const responseErrorMessage = (data: PredictionResponse, status: number) => {
-  if (typeof data.message === "string" && data.message.trim()) return data.message;
-  if (typeof data.error === "string" && data.error.trim()) {
-    if (data.error === "classification_service_not_configured") {
-      return "The waste classification model is not configured on the backend.";
-    }
-    if (data.error === "classification_service_unavailable") {
-      return "The waste classification model is unavailable. Please try again later.";
-    }
-    return data.error.replace(/_/g, " ");
-  }
-  return `The classification backend returned an error (${status}).`;
-};
-
-export async function classifyWaste(file: File): Promise<ClassificationResult> {
-  const startedAt = performance.now();
-  const form = new FormData();
-  form.append("image", file);
-
-  let response: Response;
-  try {
-    response = await fetch(PREDICTION_URL, { method: "POST", body: form });
-  } catch {
-    throw new Error("The classification backend is unavailable. Check the app API connection and try again.");
-  }
-
-  let data: PredictionResponse;
-  try {
-    data = await response.json() as PredictionResponse;
-  } catch {
-    throw new Error("The classification backend returned an invalid response.");
-  }
-
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    throw new Error("The classification backend returned an invalid response.");
-  }
-
-  if (!response.ok) {
-    throw new Error(responseErrorMessage(data, response.status));
-  }
-
-  const predictedClass = data.class ?? data.class_name;
-  if (typeof predictedClass !== "string" || !predictedClass.trim()) {
-    throw new Error("The classification backend returned no waste class.");
-  }
-  const confidenceIsPercentage = typeof data.class_name === "string";
-  const maxConfidence = confidenceIsPercentage ? 100 : 1;
-  if (
-    typeof data.confidence !== "number" ||
-    !Number.isFinite(data.confidence) ||
-    data.confidence < 0 ||
-    data.confidence > maxConfidence
+export class WasteClassificationError extends Error {
+  constructor(
+    public readonly status: ClassificationErrorStatus,
+    message: string,
   ) {
-    throw new Error("The classification backend returned an invalid confidence score.");
+    super(message);
+    this.name = "WasteClassificationError";
+  }
+}
+
+const MATERIAL_GUIDANCE: Record<string, { tips: string[]; disposalMethod: string }> = {
+  biodegradable: { tips: ["Compost in a suitable organic-waste bin."], disposalMethod: "Compost bin" },
+  cardboard: { tips: ["Flatten and keep dry."], disposalMethod: "Recycling bin" },
+  ceramic: { tips: ["Check local guidance; ceramics are not accepted with glass recycling."], disposalMethod: "General waste" },
+  cloth: { tips: ["Donate wearable items or use a textile collection point."], disposalMethod: "Textile collection" },
+  "electronic waste": { tips: ["Use an authorized e-waste collection point."], disposalMethod: "E-waste collection" },
+  glass: { tips: ["Rinse containers and separate lids where required."], disposalMethod: "Glass recycling" },
+  hazardous: { tips: ["Follow local hazardous-waste drop-off guidance."], disposalMethod: "Hazardous-waste collection" },
+  metal: { tips: ["Empty and rinse containers."], disposalMethod: "Metal recycling" },
+  paper: { tips: ["Keep paper clean and dry."], disposalMethod: "Paper recycling" },
+  plastic: { tips: ["Rinse containers and check local recycling rules."], disposalMethod: "Plastic recycling" },
+};
+
+export function validateImageForClassification(file: File) {
+  const allowed = ["image/jpeg", "image/png", "image/webp"];
+  if (!allowed.includes(file.type)) {
+    return { isValid: false, error: "Please choose a JPG, PNG, or WEBP image." };
+  }
+  if (file.size === 0 || file.size > config.defaults.maxUploadSize) {
+    return { isValid: false, error: "Choose an image smaller than 10 MB." };
+  }
+  return { isValid: true, error: null };
+}
+
+const mapPredictionError = (error: unknown): WasteClassificationError => {
+  if (error instanceof RoboflowPredictionError) {
+    return new WasteClassificationError(error.kind, error.message);
+  }
+  return new WasteClassificationError("api_error", "Unable to analyze this image. Please try again.");
+};
+
+export async function classifyWaste(
+  file: File,
+  onPhase?: (phase: PredictionPhase) => void,
+): Promise<ClassificationResult> {
+  const validation = validateImageForClassification(file);
+  if (!validation.isValid) {
+    throw new WasteClassificationError("invalid_image", validation.error ?? "Please choose a supported image.");
   }
 
-  const classKey = predictedClass.trim().toLowerCase();
-  const info = WASTE_CLASS_INFO[classKey];
-  if (!info) {
-    throw new Error(`The model returned an unsupported waste class: ${predictedClass.trim()}.`);
-  }
-  if (data.processingTime !== undefined && (
-    typeof data.processingTime !== "number" ||
-    !Number.isFinite(data.processingTime) ||
-    data.processingTime < 0
-  )) {
-    throw new Error("The classification backend returned an invalid processing time.");
+  const startedAt = performance.now();
+  let prediction;
+  try {
+    prediction = await predictWaste(file, onPhase);
+  } catch (error) {
+    throw mapPredictionError(error);
   }
 
+  const validPredictions = prediction.predictions
+    .filter((detection) => getWasteCategory(detection.materialKey))
+    .sort((a, b) => b.confidence - a.confidence);
+  const primary = validPredictions[0];
+
+  if (!primary) {
+    throw new WasteClassificationError(
+      "no_detection",
+      prediction.status === "no_detection"
+        ? prediction.message
+        : "No supported waste material was found. Please try another image.",
+    );
+  }
+
+  const category = getWasteCategory(primary.materialKey);
+  if (!category) {
+    throw new WasteClassificationError("no_detection", "No supported waste material was found. Please try another image.");
+  }
+  if (primary.confidence < ROBOFLOW_CONFIDENCE_THRESHOLD) {
+    throw new WasteClassificationError(
+      "low_confidence",
+      "Waste could not be identified confidently. Please capture a clearer image.",
+    );
+  }
+
+  const guidance = MATERIAL_GUIDANCE[primary.materialKey];
   return {
-    detailedClass: classKey,
-    category: info.category,
-    confidence: confidenceIsPercentage ? data.confidence : data.confidence * 100,
-    processingTime: typeof data.processingTime === "number"
-      ? data.processingTime
-      : Math.round(performance.now() - startedAt),
-    tips: info.tips,
-    disposalMethod: info.disposalMethod,
+    detailedClass: primary.material,
+    material: primary.material,
+    materialKey: primary.materialKey,
+    category: category.label,
+    categoryKey: category.categoryKey,
+    classification: category.classification,
+    confidence: primary.confidence,
+    predictions: prediction.predictions,
+    processingTime: Math.round(performance.now() - startedAt),
+    tips: guidance?.tips,
+    disposalMethod: guidance?.disposalMethod,
   };
 }
 
@@ -130,12 +135,16 @@ export async function persistWasteClassification(
 
   const { error } = await supabase.from("waste_classifications").insert({
     user_id: userId,
-    classification: result.category,
-    confidence: result.confidence / 100,
+    classification: result.classification,
+    confidence: result.confidence,
     details: {
-      detailed_class: result.detailedClass,
+      detailed_class: result.material,
+      material: result.material,
+      material_key: result.materialKey,
       category: result.category,
-      confidence_percent: result.confidence,
+      category_key: result.categoryKey,
+      confidence_percent: Math.round(result.confidence * 100),
+      predictions: result.predictions,
       disposal_method: result.disposalMethod ?? null,
       tips: result.tips ?? [],
       processing_time_ms: result.processingTime ?? null,
@@ -147,21 +156,16 @@ export async function persistWasteClassification(
   }
 }
 
-export function validateImageForClassification(file: File) {
-  const allowed = ["image/jpeg", "image/png", "image/webp"];
-  if (!allowed.includes(file.type)) return { isValid: false, error: "Invalid image format" };
-  if (file.size > config.defaults.maxUploadSize) return { isValid: false, error: "File too large" };
-  return { isValid: true, error: null };
-}
-
 export function useWasteClassification() {
   const [loading, setLoading] = useState(false);
   const [modelReady, setModelReady] = useState(false);
+  const [phase, setPhase] = useState<PredictionPhase | null>(null);
 
   const classify = useCallback(async (file: File) => {
     setLoading(true);
+    setPhase("preparing_image");
     try {
-      const result = await classifyWaste(file);
+      const result = await classifyWaste(file, setPhase);
       setModelReady(true);
       return result;
     } catch (error) {
@@ -169,8 +173,9 @@ export function useWasteClassification() {
       throw error;
     } finally {
       setLoading(false);
+      setPhase(null);
     }
   }, []);
 
-  return { classifyWaste: classify, loading, modelReady };
+  return { classifyWaste: classify, loading, modelReady, phase };
 }

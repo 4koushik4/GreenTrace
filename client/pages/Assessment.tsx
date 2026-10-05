@@ -66,7 +66,7 @@ async function decodeQRFromImage(file: File): Promise<string | null> {
 
 const Assessment: React.FC = () => {
   const { user: sbUser } = useSbAuth();
-  const { classifyWaste, loading: classifying } = useWasteClassification();
+  const { classifyWaste, loading: classifying, phase: classificationPhase } = useWasteClassification();
   const { location, getCurrentLocation } = useGeolocation();
   const {
     centers,
@@ -108,7 +108,9 @@ const Assessment: React.FC = () => {
     if (!file) return;
     const validation = validateImageForClassification(file);
     if (!validation.isValid) {
-      alert(validation.error);
+      setLastFile(null);
+      setClassification(null);
+      setPredictionError(validation.error);
       return;
     }
     setProcessing(true);
@@ -132,7 +134,12 @@ const Assessment: React.FC = () => {
   const dropzoneInputRef = useRef<HTMLInputElement | null>(null);
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { "image/*": [] },
+    onDropRejected: () => {
+      setLastFile(null);
+      setClassification(null);
+      setPredictionError("Please choose a JPG, PNG, or WEBP image.");
+    },
+    accept: { "image/jpeg": [".jpg", ".jpeg"], "image/png": [".png"], "image/webp": [".webp"] },
   });
 
   const progressPercent = useMemo(() => {
@@ -333,7 +340,7 @@ const Assessment: React.FC = () => {
               <div className="mt-2 text-right">
                 <Input
                   type="file"
-                  accept="image/*"
+                  accept="image/jpeg,image/png,image/webp"
                   capture="environment"
                   onChange={async (e) => {
                     if (processing) return;
@@ -341,7 +348,10 @@ const Assessment: React.FC = () => {
                     if (!file) return;
                     const validation = validateImageForClassification(file);
                     if (!validation.isValid) {
-                      alert(validation.error);
+                      setLastFile(null);
+                      setClassification(null);
+                      setPredictionError(validation.error);
+                      e.target.value = "";
                       return;
                     }
                     setProcessing(true);
@@ -352,8 +362,7 @@ const Assessment: React.FC = () => {
                     try {
                       await classifyAndPersist(file);
                     } catch (err) {
-                      console.error("Classification failed:", err);
-                      setPredictionError((err as any)?.message || String(err) || "Prediction failed");
+                      setPredictionError(err instanceof Error ? err.message : "Unable to analyze this image. Please try again.");
                     } finally {
                       setProcessing(false);
                       // reset input so same file can be selected again if needed
@@ -364,7 +373,7 @@ const Assessment: React.FC = () => {
                   }}
                 />
                 {predictionError && (
-                  <div className="mt-2 text-sm text-red-500 flex items-center justify-between">
+                  <div className="mt-2 text-sm text-red-500 flex items-center justify-between" role="alert">
                     <div>{predictionError}</div>
                     <div className="flex gap-2">
                       <Button
@@ -420,27 +429,27 @@ const Assessment: React.FC = () => {
                         <Loader2 className="w-5 h-5 animate-spin" />
                       )}
                     </div>
+                    {classifying && (
+                      <p className="mt-2 text-sm text-muted-foreground" role="status">
+                        {classificationPhase === "preparing_image" ? "Preparing image…" : classificationPhase === "scanning" ? "Sending image to Roboflow…" : "Analyzing waste…"}
+                      </p>
+                    )}
                     {classification && (
                       <div className="mt-3 text-sm space-y-2">
+                        <p className="font-medium">Detected material: {classification.material}</p>
                         <div className="flex items-center gap-2">
-                          <Badge 
-                            variant="outline" 
-                            className="capitalize bg-blue-50 text-blue-700 border-blue-200"
-                          >
-                            {classification.detailedClass}
-                          </Badge>
-                          <Badge 
+                          <Badge variant="outline">{classification.material}</Badge>
+                          <Badge
                             className="capitalize"
                             style={{
-                              backgroundColor: classification.category === 'organic' ? '#10b981' : 
-                                             classification.category === 'recyclable' ? '#0ea5e9' : '#ef4444',
-                              color: 'white'
+                              backgroundColor: classification.categoryKey === "biodegradable" ? "#10b981" : classification.categoryKey === "recyclable" ? "#0ea5e9" : classification.categoryKey === "hazardous" ? "#ef4444" : "#64748b",
+                              color: "white",
                             }}
                           >
                             {classification.category}
                           </Badge>
                           <span className="text-muted-foreground ml-auto">
-                            {classification.confidence}%
+                            {Math.round(classification.confidence * 100)}%
                           </span>
                         </div>
                         {classification.disposalMethod && (
