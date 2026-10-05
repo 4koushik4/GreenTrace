@@ -123,7 +123,13 @@ export default function MessagesPage() {
       setAllMessages((current) => [...current, sent]);
       setText("");
     } catch (cause) {
-      setError(cause instanceof Error ? `Message was not sent: ${cause.message}` : "Message was not sent because message storage is unavailable.");
+      const details = cause && typeof cause === "object"
+        ? cause as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+        : null;
+      const description = [details?.message, details?.details, details?.hint]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .join(" ") || (cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "Message storage is unavailable.");
+      setError(`Message was not sent: ${description}${details?.code ? ` (code: ${String(details.code)})` : ""}`);
     } finally {
       setIsSending(false);
     }
