@@ -106,26 +106,81 @@ export async function createOrder(data: {
   return res;
 }
 
-export async function createOffer(data: {
+export type MarketplaceOffer = {
+  id: string;
   listing_id: string;
   buyer_id: string;
+  created_by: string;
+  parent_offer_id: string | null;
+  amount: number;
+  message: string | null;
+  status: "pending" | "countered" | "accepted" | "rejected";
+  created_at: string;
+  listingTitle: string;
+  sellerId: string;
+};
+
+export async function createOffer(data: {
+  listing_id: string;
   amount: number;
   message?: string;
+  parent_offer_id?: string | null;
 }) {
-  const { data: res, error } = await supabase
-    .from("marketplace_offers")
-    .insert([
-      {
-        listing_id: data.listing_id,
-        buyer_id: data.buyer_id,
-        amount: data.amount,
-        message: data.message || null,
-        status: "pending",
-      },
-    ])
-    .select()
-    .single();
-
+  const { data: offerId, error } = await supabase.rpc("create_marketplace_offer", {
+    p_listing_id: data.listing_id,
+    p_amount: data.amount,
+    p_message: data.message || null,
+    p_parent_offer_id: data.parent_offer_id ?? null,
+  });
   if (error) throw error;
-  return res;
+  return offerId as string;
+}
+
+export async function listUserOffers(userId: string): Promise<MarketplaceOffer[]> {
+  const { data: ownedListings, error: listingsError } = await supabase
+    .from("marketplace_listings")
+    .select("id,seller_id,title")
+    .eq("seller_id", userId);
+  if (listingsError) throw listingsError;
+
+  const ownedListingIds = (ownedListings ?? []).map((listing) => listing.id);
+  const [sentResult, receivedResult] = await Promise.all([
+    supabase.from("marketplace_offers").select("*").eq("buyer_id", userId),
+    ownedListingIds.length
+      ? supabase.from("marketplace_offers").select("*").in("listing_id", ownedListingIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (sentResult.error) throw sentResult.error;
+  if (receivedResult.error) throw receivedResult.error;
+
+  const offers = [...new Map(
+    [...(sentResult.data ?? []), ...(receivedResult.data ?? [])].map((offer) => [offer.id, offer]),
+  ).values()];
+  const listingIds = [...new Set(offers.map((offer) => offer.listing_id))];
+  const { data: listings, error: relatedListingsError } = listingIds.length
+    ? await supabase.from("marketplace_listings").select("id,seller_id,title").in("id", listingIds)
+    : { data: [], error: null };
+  if (relatedListingsError) throw relatedListingsError;
+
+  const listingById = new Map(
+    [...(ownedListings ?? []), ...(listings ?? [])].map((listing) => [listing.id, listing]),
+  );
+  return offers
+    .map((offer) => {
+      const listing = listingById.get(offer.listing_id);
+      return {
+        ...offer,
+        listingTitle: listing?.title ?? "Marketplace listing",
+        sellerId: listing?.seller_id ?? "",
+      } as MarketplaceOffer;
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export async function updateOfferStatus(offerId: string, status: "accepted" | "rejected") {
+  const { error } = await supabase.rpc("respond_to_marketplace_offer", {
+    p_offer_id: offerId,
+    p_status: status,
+  });
+  if (error) throw error;
 }

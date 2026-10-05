@@ -20,6 +20,7 @@ import {
   Coins,
   Bell,
   ShoppingBag,
+  Handshake,
 } from "lucide-react";
 import { useAuth as useSbAuth, useUserProfile } from "@/lib/supabase";
 import { useAuth as useAppAuth } from "../App";
@@ -86,6 +87,12 @@ const navigationItems = [
     description: "List your item",
   },
   {
+    title: "Offers",
+    href: "/offers",
+    icon: Handshake,
+    description: "Negotiate marketplace sales",
+  },
+  {
     title: "Eco-Points & Rewards",
     href: "/rewards",
     icon: Award,
@@ -95,7 +102,7 @@ const navigationItems = [
     title: "Messages",
     href: "/messages",
     icon: Bell,
-    description: "Chat with worker",
+    description: "Chat with other users",
   },
  
   {

@@ -58,6 +58,20 @@ export default function MessagesPage() {
     };
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!supabase || !user?.id) return;
+    const appendMessage = (message: Message) => {
+      setAllMessages((current) => current.some((existing) => existing.id === message.id)
+        ? current
+        : [...current, message].sort((a, b) => a.created_at.localeCompare(b.created_at)));
+    };
+    const channel = supabase.channel(`user-messages-${user.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `to_user_id=eq.${user.id}` }, ({ new: row }) => appendMessage(row as Message))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `from_user_id=eq.${user.id}` }, ({ new: row }) => appendMessage(row as Message))
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [user?.id]);
+
   const threadMessages = useMemo(
     () => recipientId
       ? allMessages.filter((message) =>
@@ -109,7 +123,13 @@ export default function MessagesPage() {
       setAllMessages((current) => [...current, sent]);
       setText("");
     } catch (cause) {
-      setError(cause instanceof Error ? `Message was not sent: ${cause.message}` : "Message was not sent because message storage is unavailable.");
+      const details = cause && typeof cause === "object"
+        ? cause as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+        : null;
+      const description = [details?.message, details?.details, details?.hint]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .join(" ") || (cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "Message storage is unavailable.");
+      setError(`Message was not sent: ${description}${details?.code ? ` (code: ${String(details.code)})` : ""}`);
     } finally {
       setIsSending(false);
     }

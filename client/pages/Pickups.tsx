@@ -72,9 +72,15 @@ export default function PickupsPage() {
       });
     } catch (error) {
       console.error('Failed to cancel pickup:', error);
+      const details = error && typeof error === 'object'
+        ? error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+        : null;
+      const description = [details?.message, details?.details, details?.hint]
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+        .join(' ') || (error instanceof Error ? error.message : 'Failed to cancel pickup');
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to cancel pickup',
+        description: details?.code ? `${description} (code: ${String(details.code)})` : description,
         variant: 'destructive',
       });
     }
