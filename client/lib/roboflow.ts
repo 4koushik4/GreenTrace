@@ -1,9 +1,7 @@
 import { config } from "./config";
 import { formatMaterial, normalizeMaterialKey } from "./waste-classification";
 
-export const ROBOFLOW_MODEL = "kou-551wn/garbage-classification-model-v1-sfvrl-2-rfdetr-medium-t1";
-const ROBOFLOW_API_URL = "https://serverless.roboflow.com";
-const ROBOFLOW_API_KEY = import.meta.env.VITE_ROBOFLOW_API_KEY;
+const ROBOFLOW_PROXY_URL = "/api/roboflow/predict";
 export const ROBOFLOW_CONFIDENCE_THRESHOLD = 0.5;
 const REQUEST_TIMEOUT_MS = 30_000;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -36,7 +34,7 @@ export type WastePrediction =
     };
 
 export type PredictionPhase = "preparing_image" | "scanning" | "predicting";
-export type PredictionErrorKind = "invalid_image" | "missing_api_key" | "timeout" | "network_error" | "api_error";
+export type PredictionErrorKind = "invalid_image" | "not_configured" | "timeout" | "network_error" | "api_error";
 
 export class RoboflowPredictionError extends Error {
   constructor(public readonly kind: PredictionErrorKind) {
@@ -49,8 +47,8 @@ const predictionErrorMessage = (kind: PredictionErrorKind) => {
   switch (kind) {
     case "invalid_image":
       return "Please choose a JPG, PNG, or WEBP image under 10 MB.";
-    case "missing_api_key":
-      return "Roboflow is not configured. Add VITE_ROBOFLOW_API_KEY to the Vite environment.";
+    case "not_configured":
+      return "Roboflow is not configured on the server.";
     case "timeout":
       return "Image analysis timed out. Please try again.";
     case "network_error":
@@ -120,8 +118,6 @@ export async function predictWaste(
   if (!ALLOWED_IMAGE_TYPES.has(image.type) || image.size === 0 || image.size > config.defaults.maxUploadSize) {
     throw new RoboflowPredictionError("invalid_image");
   }
-  if (!ROBOFLOW_API_KEY) throw new RoboflowPredictionError("missing_api_key");
-
   onPhase?.("preparing_image");
   const encodedImage = await encodeImage(image);
   onPhase?.("scanning");
@@ -131,12 +127,9 @@ export async function predictWaste(
   let response: Response;
 
   try {
-    response = await fetch(`${ROBOFLOW_API_URL}/${ROBOFLOW_MODEL}`, {
+    response = await fetch(ROBOFLOW_PROXY_URL, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${ROBOFLOW_API_KEY}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
+      headers: { "Content-Type": "text/plain" },
       body: encodedImage,
       signal: controller.signal,
     });
@@ -147,13 +140,21 @@ export async function predictWaste(
   window.clearTimeout(timeout);
   onPhase?.("predicting");
 
-  if (!response.ok) throw new RoboflowPredictionError("api_error");
-
   let data: unknown;
   try {
     data = await response.json();
   } catch {
     throw new RoboflowPredictionError("api_error");
+  }
+
+  if (!response.ok) {
+    const error = data as { error?: unknown };
+    const kind = error?.error === "invalid_request" ? "invalid_image"
+      : error?.error === "not_configured" ? "not_configured"
+      : error?.error === "timeout" ? "timeout"
+      : error?.error === "network_error" ? "network_error"
+      : "api_error";
+    throw new RoboflowPredictionError(kind);
   }
 
   const predictions = parseDetections(data);

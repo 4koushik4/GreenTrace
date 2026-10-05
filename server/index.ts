@@ -10,6 +10,7 @@ import express from "express";
 import cors from "cors";
 import aiChatRouter from "./routes/ai-chat";
 import { handlePredict } from "./routes/predict";
+import { requestRoboflowPrediction, RoboflowProxyError } from "./roboflow-proxy";
 
 export function createServer() {
   const app = express();
@@ -18,6 +19,21 @@ export function createServer() {
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  app.use(express.text({ type: "text/plain", limit: "14mb" }));
+
+  app.post("/api/roboflow/predict", async (req, res) => {
+    try {
+      if (typeof req.body !== "string") {
+        return res.status(400).json({ error: "invalid_request", message: "Choose a supported image smaller than 10 MB." });
+      }
+      return res.json(await requestRoboflowPrediction(req.body));
+    } catch (error) {
+      if (error instanceof RoboflowProxyError) {
+        return res.status(error.status).json({ error: error.code, message: error.message });
+      }
+      return res.status(500).json({ error: "proxy_error", message: "Unable to analyze this image. Please try again." });
+    }
+  });
 
   // =====================================================
   // Groq AI Chat endpoint

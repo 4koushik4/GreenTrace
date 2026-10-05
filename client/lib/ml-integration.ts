@@ -24,7 +24,7 @@ export type ClassificationResult = {
   disposalMethod?: string;
 };
 
-export type ClassificationErrorStatus = "low_confidence" | "no_detection" | "api_error" | "network_error" | "timeout" | "invalid_image" | "missing_api_key";
+export type ClassificationErrorStatus = "low_confidence" | "no_detection" | "api_error" | "network_error" | "timeout" | "invalid_image" | "not_configured";
 
 export class WasteClassificationError extends Error {
   constructor(
