@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { useAuth } from '@/lib/supabase';
-import { listUserPickups, updatePickupStatus } from '@/lib/pickups';
+import { supabase, useAuth } from '@/lib/supabase';
+import { cancelPickup, listUserPickups } from '@/lib/pickups';
 import { Pickup } from '@/lib/pickups';
 import {
   Card,
@@ -34,15 +34,22 @@ export default function PickupsPage() {
   const { toast } = useToast();
 
   useEffect(() => {
-    if (user) {
-      loadPickups();
-    }
-  }, [user]);
+    if (!user || !supabase) return;
+    void loadPickups();
+    const channel = supabase.channel(`citizen-pickups-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pickups', filter: `user_id=eq.${user.id}` }, () => { void loadPickups(); })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [user?.id]);
 
   const loadPickups = async () => {
     try {
       setLoading(true);
-      const userId = user?.id || 'mock-user-1';
+      if (!user) {
+        setPickups([]);
+        return;
+      }
+      const userId = user.id;
       const data = await listUserPickups(userId);
       setPickups(data || []);
     } catch (error) {
@@ -57,7 +64,7 @@ export default function PickupsPage() {
     if (!window.confirm('Are you sure you want to cancel this pickup?')) return;
     
     try {
-      await updatePickupStatus(pickupId, 'cancelled');
+      await cancelPickup(pickupId);
       await loadPickups();
       toast({
         title: 'Success',
@@ -76,7 +83,10 @@ export default function PickupsPage() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'scheduled':
+      case 'accepted':
         return <Clock className="w-5 h-5 text-blue-500" />;
+      case 'rejected':
+        return <AlertCircle className="w-5 h-5 text-red-500" />;
       case 'collected':
         return <CheckCircle className="w-5 h-5 text-green-500" />;
       case 'cancelled':
@@ -93,7 +103,10 @@ export default function PickupsPage() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'scheduled':
+      case 'accepted':
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+      case 'rejected':
+        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
       case 'collected':
         return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
       case 'cancelled':
@@ -273,8 +286,7 @@ export default function PickupsPage() {
                     </Button>
                   </Link>
 
-                  {pickup.status !== 'collected' &&
-                    pickup.status !== 'cancelled' && (
+                  {['requested', 'scheduled'].includes(pickup.status) && (
                       <Button
                         variant="destructive"
                         size="sm"

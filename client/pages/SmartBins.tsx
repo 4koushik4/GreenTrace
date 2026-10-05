@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { listSmartBins, getRouteSuggestion, SmartBin } from '@/lib/iot';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Link } from 'react-router-dom';
 
 export default function SmartBinsPage() {
   const [bins, setBins] = useState<SmartBin[]>([]);
@@ -62,6 +63,18 @@ export default function SmartBinsPage() {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Environmental impact data</CardTitle>
+          <CardDescription>Bin fill percentage is operational telemetry; it is not a measured waste mass and is not converted into CO₂e.</CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          Add a calibrated weight sensor or record a verified collection weight in the{' '}
+          <Link className="font-medium text-emerald-600 underline" to="/dashboard#climate-impact">Climate &amp; Ecosystem Impact section on your dashboard</Link>{' '}
+          before estimating material recovery or emissions. This prevents fill-level readings from being presented as measured environmental impact.
         </CardContent>
       </Card>
 

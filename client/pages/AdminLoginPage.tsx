@@ -31,7 +31,7 @@ export default function AdminLoginPage() {
   const navigate = useNavigate();
   const { login, loading: authLoading, error: authError } = useAdminAuth();
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState("staff@gt.com");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [localLoading, setLocalLoading] = useState(false);
@@ -47,8 +47,6 @@ export default function AdminLoginPage() {
       if (success) {
         // Redirect based on role — the dashboard will handle role-based views
         navigate("/admin/dashboard");
-      } else {
-        setLocalError("Invalid credentials or insufficient permissions.");
       }
     } catch (err: any) {
       setLocalError(err.message || "Login failed");
@@ -88,10 +86,10 @@ export default function AdminLoginPage() {
             </motion.div>
 
             <CardTitle className="text-2xl font-bold">
-              Admin / Supervisor Login
+              Staff Login
             </CardTitle>
             <CardDescription className="text-gray-400 mt-2">
-              Green India Management Portal
+              GreenTrace Staff Portal
             </CardDescription>
           </CardHeader>
 
@@ -124,7 +122,8 @@ export default function AdminLoginPage() {
                     className="pl-11 pr-4 py-2.5 bg-slate-800/50 border-slate-700/50 text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200 hover:border-slate-600/50"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="admin@greenindia.com"
+                    readOnly
+                    aria-label="Staff email"
                     required
                   />
                 </div>
@@ -192,7 +191,7 @@ export default function AdminLoginPage() {
                 <div>
                   <p className="font-medium">Staff-only portal</p>
                   <p className="text-indigo-400 text-xs mt-1">
-                    Super Admins, Admins, and Supervisors can sign in here. Citizens please use the{" "}
+                    Only the authorized staff@gt.com account can sign in here. Citizens please use the{" "}
                     <Link to="/login" className="underline hover:text-white">
                       regular login
                     </Link>.

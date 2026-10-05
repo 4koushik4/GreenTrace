@@ -25,7 +25,7 @@ import { AlertTriangle, FileText, MapPin } from "lucide-react";
 import { Variants } from "framer-motion";
 interface Report {
   id: string;
-  user_id: string;
+  citizen_id: string;
   title?: string;
   description: string;
   category: string;
@@ -35,6 +35,7 @@ interface Report {
   longitude?: number;
   address?: string;
   status: string;
+  resolution_notes?: string;
   created_at: string;
 }
 
@@ -56,15 +57,20 @@ export default function ReportIssue() {
   const [reports, setReports] = useState<Report[]>([]);
 
   useEffect(() => {
-    if (user) loadReports();
-  }, [user]);
+    if (!user || !supabase) return;
+    void loadReports();
+    const channel = supabase.channel(`citizen-issues-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "waste_reports", filter: `citizen_id=eq.${user.id}` }, () => { void loadReports(); })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [user?.id]);
 
   const loadReports = async () => {
     try {
       const { data, error } = await supabase
-        .from("illegal_reports")
+        .from("waste_reports")
         .select("*")
-        .eq("user_id", user!.id)
+        .eq("citizen_id", user!.id)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -98,32 +104,25 @@ export default function ReportIssue() {
 
   if (!user) return setError("Please login first");
   if (!desc.trim()) return setError("Description required");
-  if (!photo) return setError("Photo required");
 
   setSubmitting(true);
 
   try {
     const uid = user.id;
 
-    const path = `${uid}/${Date.now()}_${photo.name}`;
-
-    const { data: up, error: upErr } = await supabase.storage
-      .from("Reports")
-      .upload(path, photo);
-
-    if (upErr) throw upErr;
-
-    const { data: pub } = supabase.storage
-      .from("Reports")
-      .getPublicUrl(up.path);
-
-    const photoUrl = pub.publicUrl;
+    let photoUrl: string | null = null;
+    if (photo) {
+      const path = `${uid}/${Date.now()}_${photo.name}`;
+      const { data: up, error: upErr } = await supabase.storage.from("Reports").upload(path, photo);
+      if (upErr) throw upErr;
+      photoUrl = supabase.storage.from("Reports").getPublicUrl(up.path).data.publicUrl;
+    }
 
     const { error } = await supabase
-      .from("illegal_reports")
+      .from("waste_reports")
       .insert({
-        user_id: uid,
-        title: title || null,
+        citizen_id: uid,
+        title: title.trim() || category.replace(/_/g, " "),
         description: desc,
         category,
         severity,
@@ -131,7 +130,7 @@ export default function ReportIssue() {
         latitude: loc.lat || null,
         longitude: loc.lng || null,
         address: address || null,
-        status: "new",
+        status: "pending",
       })
       .select();   // <-- IMPORTANT for RLS debugging
 
@@ -270,7 +269,7 @@ export default function ReportIssue() {
                         <SelectItem value="low" className="text-white hover:bg-slate-700">Low</SelectItem>
                         <SelectItem value="medium" className="text-white hover:bg-slate-700">Medium</SelectItem>
                         <SelectItem value="high" className="text-white hover:bg-slate-700">High</SelectItem>
-                        <SelectItem value="urgent" className="text-white hover:bg-slate-700">Urgent</SelectItem>
+                        <SelectItem value="critical" className="text-white hover:bg-slate-700">Critical</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -365,6 +364,7 @@ export default function ReportIssue() {
                         </span>
                       </div>
                       <p className="text-gray-400 mb-2">{r.description}</p>
+                      {r.resolution_notes && <p className="mb-2 rounded bg-green-500/10 p-2 text-sm text-green-300">Staff update: {r.resolution_notes}</p>}
                       <div className="flex justify-between text-sm text-gray-500">
                         <span>Category: {r.category.replace('_', ' ')}</span>
                         <span>{new Date(r.created_at).toLocaleDateString()}</span>

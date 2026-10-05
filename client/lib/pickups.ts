@@ -9,6 +9,8 @@ export type WasteType =
   | "recyclable";
 export type PickupStatus =
   | "requested"
+  | "accepted"
+  | "rejected"
   | "scheduled"
   | "collected"
   | "missed"
@@ -63,19 +65,12 @@ export async function createPickup(
     waste_type: input.waste_type,
     pickup_date: input.pickup_date,
     description: input.description,
-    status: "scheduled",
+    status: "requested",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 
-  if (!supabase) {
-    const id = `local-${Date.now()}`;
-    const item: Pickup = { id, ...payload };
-    const list = readLocal();
-    list.unshift(item);
-    writeLocal(list);
-    return item;
-  }
+  if (!supabase) throw new Error("Supabase is required to schedule a pickup that staff can review.");
 
   const { data, error } = await supabase
     .from("pickups")
@@ -101,26 +96,33 @@ export async function listUserPickups(userId: string): Promise<Pickup[]> {
   return (data || []) as Pickup[];
 }
 
-export async function updatePickupStatus(
-  id: string,
-  status: PickupStatus,
-): Promise<void> {
-  if (!supabase) {
-    const list = readLocal();
-    const idx = list.findIndex((p) => p.id === id);
-    if (idx >= 0) {
-      list[idx] = {
-        ...list[idx],
-        status,
-        updated_at: new Date().toISOString(),
-      };
-      writeLocal(list);
+export async function cancelPickup(id: string): Promise<void> {
+  if (!supabase) throw new Error("Supabase is required to cancel a pickup.");
+  const { data, error } = await supabase.rpc("cancel_own_pickup", {
+    p_pickup_id: id,
+  });
+  if (error) {
+    const functionUnavailable =
+      (error.code === "PGRST202" || error.code === "42883") &&
+      error.message.includes("cancel_own_pickup");
+    if (!functionUnavailable) throw error;
+
+    // Older deployments may not have applied the RPC migration yet. This
+    // update remains safe because the database RLS policy restricts callers
+    // to their own pickup and permits only the cancelled status.
+    const { data: updated, error: updateError } = await supabase
+      .from("pickups")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select("id")
+      .maybeSingle();
+    if (updateError) throw updateError;
+    if (!updated) {
+      throw new Error("Pickup could not be cancelled. It may already be processed or not belong to this account.");
     }
     return;
   }
-  const { error } = await supabase
-    .from("pickups")
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq("id", id);
-  if (error) throw error;
+  if (data !== true) {
+    throw new Error("Pickup could not be cancelled. It may already be processed or not belong to this account.");
+  }
 }

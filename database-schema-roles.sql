@@ -764,12 +764,10 @@ CREATE POLICY "ward_stats_delete_super_admin"
 
 
 -- #############################################################################
---  8.  SERVICE ROLE BYPASS (for Developer / backend operations)
+--  8.  FIRST SUPER ADMIN BOOTSTRAP
 -- #############################################################################
---  Supabase service_role key always bypasses RLS. The developer portal
---  uses the anon key + signUp so it goes through RLS. To let the dev
---  portal create the FIRST super_admin (bootstrap), we allow inserting
---  into admin_users for any authenticated user if the table is empty.
+--  Allow the first authenticated account to bootstrap the initial
+--  super_admin when no admin account exists yet.
 -- #############################################################################
 
 CREATE POLICY "admin_users_bootstrap_first_user"

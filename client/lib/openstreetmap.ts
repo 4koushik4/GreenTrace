@@ -6,6 +6,48 @@ import { useState, useEffect } from "react";
 import { maps as mapsConfig } from "./config";
 import { supabase } from "./supabase";
 
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.nchc.org.tw/api/interpreter",
+];
+
+async function fetchOverpass(query: string): Promise<{ elements: any[] }> {
+  const failures: string[] = [];
+
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        failures.push(`${new URL(endpoint).host} returned HTTP ${response.status}`);
+        continue;
+      }
+
+      return await response.json();
+    } catch (error) {
+      failures.push(
+        error instanceof Error && error.name === "AbortError"
+          ? `${new URL(endpoint).host} timed out`
+          : `${new URL(endpoint).host} could not be reached`,
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  throw new Error(
+    `Nearby map search is temporarily unavailable. Overpass services did not respond (${failures.join("; ")}). Please try again shortly.`,
+  );
+}
+
 // Location and map types
 export interface Location {
   lat: number;
@@ -294,48 +336,15 @@ export const useRecyclingCentersSearch = () => {
     setError(null);
 
     try {
-      // Calculate bounding box for search
-      const earthRadius = 6371; // km
-      const latDelta = (radiusKm / earthRadius) * (180 / Math.PI);
-      const lngDelta =
-        ((radiusKm / earthRadius) * (180 / Math.PI)) /
-        Math.cos((location.lat * Math.PI) / 180);
-
-      const bounds: MapBounds = {
-        north: location.lat + latDelta,
-        south: location.lat - latDelta,
-        east: location.lng + lngDelta,
-        west: location.lng - lngDelta,
-      };
-
-      // Search for recycling facilities using Overpass API
+      // A radial query limits the work Overpass must do compared with a bounding box.
+      const radiusMeters = Math.round(radiusKm * 1000);
       const overpassQuery = `
-        [out:json][timeout:25];
-        (
-          node["amenity"="recycling"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
-          node["amenity"="waste_disposal"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
-          node["amenity"="waste_transfer_station"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
-          way["amenity"="recycling"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
-          way["amenity"="waste_disposal"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
-          relation["amenity"="recycling"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
-        );
-        out center meta;
+        [out:json][timeout:20];
+        nwr(around:${radiusMeters},${location.lat},${location.lng})
+          ["amenity"~"^(recycling|waste_disposal|waste_transfer_station)$"];
+        out center tags;
       `;
-
-      const overpassUrl = "https://overpass-api.de/api/interpreter";
-      const response = await fetch(overpassUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: `data=${encodeURIComponent(overpassQuery)}`,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Overpass API request failed: ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      const data = await fetchOverpass(overpassQuery);
 
       // Process and format results with enhanced data
       const facilities: RecyclingFacility[] = await Promise.all(

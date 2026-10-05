@@ -15,7 +15,6 @@ import Dashboard from "./pages/Dashboard";
 import WasteClassification from "./pages/WasteClassification";
 import RecyclingCenters from "./pages/RecyclingCenters";
 import Rewards from "./pages/Rewards";
-import BuyBackPage from "./pages/BuyBack";
 import Analytics from "./pages/Analytics";
 import FootprintPage from "./pages/Footprint";
 import Profile from "./pages/Profile";
@@ -39,11 +38,10 @@ import AdminLoginPage from "./pages/AdminLoginPage";
 import AdminDashboardRouter from "./pages/AdminDashboardRouter";
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
-import SupervisorDashboard from "./pages/SupervisorDashboard";
+import StaffIssueReportsPage from "./pages/StaffIssueReportsPage";
+import StaffCollectionLogsPage from "./pages/StaffCollectionLogsPage";
+import StaffPickupRequestsPage from "./pages/StaffPickupRequestsPage";
 
-// Developer pages
-import DevLoginPage from "./pages/DevLoginPage";
-import DevDashboard from "./pages/DevDashboard";
 
 // Import components
 import DashboardLayout from "./components/DashboardLayout";
@@ -246,11 +244,10 @@ const App = () => {
                   <Route path="/admin/dashboard" element={<AdminDashboardRouter />} />
                   <Route path="/admin/super-admin" element={<SuperAdminDashboard />} />
                   <Route path="/admin/city-admin" element={<AdminDashboard />} />
-                  <Route path="/admin/supervisor" element={<SupervisorDashboard />} />
-
-                  {/* Developer Routes */}
-                  <Route path="/dev/login" element={<DevLoginPage />} />
-                  <Route path="/dev/dashboard" element={<DevDashboard />} />
+                  <Route path="/admin/supervisor" element={<Navigate to="/admin/supervisor/issues" replace />} />
+                  <Route path="/admin/supervisor/issues" element={<StaffIssueReportsPage />} />
+                  <Route path="/admin/supervisor/logs" element={<StaffCollectionLogsPage />} />
+                  <Route path="/admin/supervisor/pickups" element={<StaffPickupRequestsPage />} />
 
                   {/* Protected Routes */}
                 <Route
@@ -319,16 +316,6 @@ const App = () => {
                     <ProtectedRoute>
                       <AppLayout>
                         <RecyclingCenters />
-                      </AppLayout>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/buyback"
-                  element={
-                    <ProtectedRoute>
-                      <AppLayout>
-                        <BuyBackPage />
                       </AppLayout>
                     </ProtectedRoute>
                   }

@@ -15,9 +15,9 @@ import {
   Menu,
   X,
   Recycle,
-  Coins,
   Target,
   TrendingUp,
+  Coins,
   Bell,
   ShoppingBag,
 } from "lucide-react";
@@ -72,12 +72,6 @@ const navigationItems = [
     href: "/centers",
     icon: MapPin,
     description: "Find nearby facilities",
-  },
-  {
-    title: "Buy-Back",
-    href: "/buyback",
-    icon: Coins,
-    description: "Sell recyclables",
   },
   {
     title: "Marketplace",

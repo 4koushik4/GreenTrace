@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -65,17 +65,21 @@ import {
   logWasteCollection,
 } from "@/lib/admin-auth";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
+import NotificationBell from "@/components/NotificationBell";
 
-export default function SupervisorDashboard() {
-  const { adminUser, logout } = useAdminAuth();
+type StaffDashboardPage = "reports" | "collection" | "pickups";
+
+export default function SupervisorDashboard({ page = "reports" }: { page?: StaffDashboardPage }) {
+  const { adminUser, loading: adminAuthLoading, logout } = useAdminAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const [reports, setReports] = useState<WasteReport[]>([]);
+  const [pickups, setPickups] = useState<any[]>([]);
   const [collectionLogs, setCollectionLogs] = useState<CollectionLog[]>([]);
   const [stats, setStats] = useState({ totalReports: 0, pending: 0, resolved: 0, inProgress: 0, totalWaste: 0 });
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("reports");
 
   // Collection log form
   const [showLogDialog, setShowLogDialog] = useState(false);
@@ -88,30 +92,78 @@ export default function SupervisorDashboard() {
 
   // Report status update
   const [updatingReport, setUpdatingReport] = useState<string | null>(null);
+  const [updatingPickup, setUpdatingPickup] = useState<string | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState("");
   const [showResolveDialog, setShowResolveDialog] = useState(false);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (adminAuthLoading) return;
     if (!adminUser || adminUser.role !== "supervisor") {
       navigate("/admin/login");
       return;
     }
-    loadData();
-  }, [adminUser]);
+    void loadData();
+    if (!supabase) return;
+    const pickupChannel = supabase.channel("staff-pickup-queue")
+      .on("postgres_changes", { event: "*", schema: "public", table: "pickups" }, () => { void loadData(); })
+      .subscribe();
+    const issueChannel = supabase.channel("staff-issue-queue")
+      .on("postgres_changes", { event: "*", schema: "public", table: "waste_reports" }, () => { void loadData(); })
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(pickupChannel);
+      void supabase.removeChannel(issueChannel);
+    };
+  }, [adminUser, adminAuthLoading]);
 
   const loadData = async () => {
     if (!adminUser) return;
     setLoading(true);
     const [reportsData, logsData, statsData] = await Promise.all([
-      fetchWasteReports({ ward_id: adminUser.ward_id || undefined }),
+      fetchWasteReports(),
       fetchCollectionLogs(adminUser.ward_id || undefined),
       fetchDashboardStats({ ward_id: adminUser.ward_id || undefined }),
     ]);
     setReports(reportsData);
+    if (supabase) {
+      const { data } = await supabase.from("pickups").select("*").order("created_at", { ascending: false });
+      setPickups(data ?? []);
+    } else setPickups([]);
     setCollectionLogs(logsData);
     setStats(statsData);
     setLoading(false);
+  };
+
+  const updatePickup = async (pickupId: string, status: "accepted" | "rejected" | "collected" | "missed") => {
+    if (!supabase) {
+      toast({ title: "Pickup update failed", description: "Supabase is not configured.", variant: "destructive" });
+      return;
+    }
+    setUpdatingPickup(pickupId);
+    try {
+      const { data, error } = await supabase
+        .from("pickups")
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq("id", pickupId)
+        .select("id")
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        toast({ title: "Pickup not updated", description: "No matching request was updated. Refresh and try again.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Pickup updated", description: `Request marked ${status}.` });
+      await loadData();
+    } catch (error) {
+      toast({
+        title: "Pickup update failed",
+        description: error instanceof Error ? error.message : "Unable to update this pickup request.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingPickup(null);
+    }
   };
 
   const handleUpdateStatus = async (reportId: string, status: string) => {
@@ -122,22 +174,32 @@ export default function SupervisorDashboard() {
       setUpdatingReport(null);
       return;
     }
-    await updateReportStatus(reportId, status);
-    toast({ title: "Status Updated", description: `Report marked as ${status.replace("_", " ")}` });
-    setUpdatingReport(null);
-    loadData();
+    try {
+      await updateReportStatus(reportId, status);
+      toast({ title: "Status Updated", description: `Report marked as ${status.replace("_", " ")}` });
+      await loadData();
+    } catch (error) {
+      toast({ title: "Update failed", description: error instanceof Error ? error.message : "Unable to update report.", variant: "destructive" });
+    } finally {
+      setUpdatingReport(null);
+    }
   };
 
   const handleResolve = async () => {
     if (!selectedReportId) return;
     setUpdatingReport(selectedReportId);
-    await updateReportStatus(selectedReportId, "resolved", resolutionNotes);
-    toast({ title: "Report Resolved" });
-    setShowResolveDialog(false);
-    setResolutionNotes("");
-    setSelectedReportId(null);
-    setUpdatingReport(null);
-    loadData();
+    try {
+      await updateReportStatus(selectedReportId, "resolved", resolutionNotes);
+      toast({ title: "Report Resolved" });
+      setShowResolveDialog(false);
+      setResolutionNotes("");
+      setSelectedReportId(null);
+      await loadData();
+    } catch (error) {
+      toast({ title: "Resolution failed", description: error instanceof Error ? error.message : "Unable to resolve report.", variant: "destructive" });
+    } finally {
+      setUpdatingReport(null);
+    }
   };
 
   const handleLogCollection = async () => {
@@ -205,13 +267,16 @@ export default function SupervisorDashboard() {
             <div>
               <h1 className="font-bold text-lg">Supervisor Dashboard</h1>
               <p className="text-xs text-gray-400">
-                {adminUser?.full_name} — Ward: {adminUser?.ward_name || "Unassigned"}
+                {adminUser?.full_name} â€” Ward: {adminUser?.ward_name || "Unassigned"}
               </p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-gray-400 hover:text-white">
-            <LogOut className="w-4 h-4 mr-1" /> Logout
-          </Button>
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <Button variant="ghost" size="sm" onClick={handleLogout} className="text-gray-400 hover:text-white">
+              <LogOut className="w-4 h-4 mr-1" /> Logout
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -248,13 +313,22 @@ export default function SupervisorDashboard() {
         </div>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <Tabs
+          value={page}
+          onValueChange={(nextPage) => {
+            const route = nextPage === "reports" ? "issues" : nextPage === "collection" ? "logs" : "pickups";
+            navigate(`/admin/supervisor/${route}`);
+          }}
+        >
           <TabsList className="bg-slate-900/60 border-slate-800/50 p-1">
             <TabsTrigger value="reports" className="data-[state=active]:bg-green-600">
               <AlertTriangle className="w-4 h-4 mr-1" /> Issue Reports
             </TabsTrigger>
             <TabsTrigger value="collection" className="data-[state=active]:bg-green-600">
               <Recycle className="w-4 h-4 mr-1" /> Collection Logs
+            </TabsTrigger>
+            <TabsTrigger value="pickups" className="data-[state=active]:bg-green-600">
+              <ClipboardList className="w-4 h-4 mr-1" /> Pickup Requests ({pickups.filter((p) => ["requested", "scheduled"].includes(p.status)).length})
             </TabsTrigger>
           </TabsList>
 
@@ -361,6 +435,18 @@ export default function SupervisorDashboard() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="pickups" className="mt-6">
+            <Card className="bg-slate-900/60 border-slate-800/50">
+              <CardHeader><CardTitle className="text-white">Citizen Pickup Requests</CardTitle><CardDescription className="text-gray-400">Accept or decline requests, then mark accepted pickups as collected or missed. Status changes notify the citizen.</CardDescription></CardHeader>
+              <CardContent className="space-y-3">
+                {pickups.length === 0 ? <p className="py-8 text-center text-gray-500">No pickup requests yet.</p> : pickups.map((pickup) => <div key={pickup.id} className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-800/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-white">{pickup.name} Â· {pickup.waste_type}</p><Badge>{String(pickup.status).replace("_", " ")}</Badge></div><p className="mt-1 text-sm text-slate-300">{pickup.address} Â· {new Date(pickup.pickup_date).toLocaleString()}</p><p className="text-xs text-slate-400">{pickup.phone} Â· {pickup.email}</p>{pickup.description && <p className="mt-1 text-sm text-slate-400">{pickup.description}</p>}</div>
+                  <div className="flex shrink-0 gap-2">{["requested", "scheduled"].includes(pickup.status) && <><Button size="sm" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "accepted")} className="bg-green-600 hover:bg-green-700">Accept</Button><Button size="sm" variant="destructive" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "rejected")}>Decline</Button></>}{pickup.status === "accepted" && <><Button size="sm" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "collected")} className="bg-green-600 hover:bg-green-700">Collected</Button><Button size="sm" variant="outline" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "missed")}>Missed</Button></>}</div>
+                </div>)}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           {/* Collection Logs Tab */}
           <TabsContent value="collection" className="mt-6">
             <Card className="bg-slate-900/60 border-slate-800/50">
@@ -443,10 +529,10 @@ export default function SupervisorDashboard() {
                 {/* Waste summary */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
                   {[
-                    { type: "Biodegradable", icon: "🌿", total: collectionLogs.filter(l => l.waste_type === "biodegradable").reduce((s, l) => s + l.quantity_kg, 0) },
-                    { type: "Recyclable", icon: "♻️", total: collectionLogs.filter(l => l.waste_type === "recyclable").reduce((s, l) => s + l.quantity_kg, 0) },
-                    { type: "Hazardous", icon: "☣️", total: collectionLogs.filter(l => l.waste_type === "hazardous").reduce((s, l) => s + l.quantity_kg, 0) },
-                    { type: "Mixed", icon: "🗑️", total: collectionLogs.filter(l => l.waste_type === "mixed").reduce((s, l) => s + l.quantity_kg, 0) },
+                    { type: "Biodegradable", icon: "ðŸŒ¿", total: collectionLogs.filter(l => l.waste_type === "biodegradable").reduce((s, l) => s + l.quantity_kg, 0) },
+                    { type: "Recyclable", icon: "â™»ï¸", total: collectionLogs.filter(l => l.waste_type === "recyclable").reduce((s, l) => s + l.quantity_kg, 0) },
+                    { type: "Hazardous", icon: "â˜£ï¸", total: collectionLogs.filter(l => l.waste_type === "hazardous").reduce((s, l) => s + l.quantity_kg, 0) },
+                    { type: "Mixed", icon: "ðŸ—‘ï¸", total: collectionLogs.filter(l => l.waste_type === "mixed").reduce((s, l) => s + l.quantity_kg, 0) },
                   ].map((item, i) => (
                     <div key={i} className="bg-slate-800/50 rounded-lg p-3 text-center">
                       <span className="text-2xl">{item.icon}</span>
@@ -490,7 +576,7 @@ export default function SupervisorDashboard() {
                             </TableCell>
                             <TableCell className="text-white font-mono">{log.quantity_kg} kg</TableCell>
                             <TableCell className="text-gray-400 max-w-[200px] truncate">
-                              {log.notes || "—"}
+                              {log.notes || "â€”"}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -535,3 +621,4 @@ export default function SupervisorDashboard() {
     </div>
   );
 }
+

@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { supabase, useAuth } from "@/lib/supabase";
+import ClimateImpact from "@/pages/ClimateImpact";
 
 interface DashboardProfile {
   full_name: string | null;
@@ -347,6 +348,10 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <section id="climate-impact" aria-label="Climate and ecosystem impact">
+        <ClimateImpact />
+      </section>
 
       <Card className={cardStyle}>
         <CardHeader>

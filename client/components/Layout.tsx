@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "../App";
 import { useTheme } from "./ThemeProvider";
 import { useAuth as useSbAuth } from "@/lib/supabase";
+import NotificationBell from "@/components/NotificationBell";
 import {
   Recycle,
   Home,
@@ -17,7 +18,6 @@ import {
   Info,
   Menu,
   X,
-  Bell,
   Settings,
   LogOut,
   Sun,
@@ -163,10 +163,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
               {/* Notifications */}
               <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                <Button size="icon" variant="ghost" className="relative">
-                  <Bell className="w-5 h-5" />
-                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full"></span>
-                </Button>
+                <NotificationBell />
               </motion.div>
 
               {/* Profile menu */}

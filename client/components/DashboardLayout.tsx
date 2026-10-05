@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { Menu, Bell } from "lucide-react";
+import { Menu } from "lucide-react";
 import Sidebar from "./Sidebar";
+import NotificationBell from "./NotificationBell";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -76,14 +77,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="relative text-gray-400 hover:text-white hover:bg-slate-800"
-                >
-                  <Bell className="w-5 h-5" />
-                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full text-xs"></span>
-                </Button>
+                <NotificationBell />
               </motion.div>
             </div>
           </div>

@@ -104,21 +104,98 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Check if we have a stored admin session on mount
+  // Wait for Supabase to restore its persisted session before restoring the
+  // staff profile. Otherwise dashboard queries can run without a JWT.
   useEffect(() => {
-    const stored = localStorage.getItem("admin_user");
-    if (stored) {
+    let active = true;
+    const restoreAdminUser = async () => {
+      const { data, error: sessionError } = await supabase?.auth.getSession() ?? {
+        data: { session: null },
+        error: null,
+      };
+      if (!active) return;
+
+      if (sessionError) throw sessionError;
+
+      const authUser = data.session?.user;
+      if (!authUser || authUser.email?.toLowerCase() !== "staff@gt.com") {
+        localStorage.removeItem("admin_user");
+        setAdminUser(null);
+        return;
+      }
+
+      const stored = localStorage.getItem("admin_user");
+      const saved = stored ? JSON.parse(stored) as AdminUser : null;
+      if (
+        saved &&
+        saved.user_id === authUser.id &&
+        saved.email?.toLowerCase() === "staff@gt.com" &&
+        saved.role === "supervisor" &&
+        saved.is_active
+      ) {
+        setAdminUser(saved);
+        return;
+      }
+
+      if (!supabase) throw new Error("Supabase is not configured");
+      const { data: profile, error: profileError } = await supabase
+        .from("admin_users")
+        .select("*")
+        .eq("user_id", authUser.id)
+        .maybeSingle();
+
+      if (!active) return;
+      if (profileError) throw profileError;
+      if (
+        !profile ||
+        profile.email?.toLowerCase() !== "staff@gt.com" ||
+        profile.role !== "supervisor" ||
+        !profile.is_active
+      ) {
+        localStorage.removeItem("admin_user");
+        setAdminUser(null);
+        return;
+      }
+
+      const restoredUser = profile as AdminUser;
+      localStorage.setItem("admin_user", JSON.stringify(restoredUser));
+      setAdminUser(restoredUser);
+    };
+
+    const restoreSession = async () => {
       try {
-        setAdminUser(JSON.parse(stored));
-      } catch { }
-    }
-    setLoading(false);
+        await restoreAdminUser();
+      } catch (err) {
+        if (active) {
+          setError(err instanceof Error ? err.message : "Unable to restore staff session.");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    const { data: authListener } = supabase?.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT" && active) {
+        setAdminUser(null);
+        localStorage.removeItem("admin_user");
+      }
+    }) ?? { data: { subscription: null } };
+
+    void restoreSession();
+    return () => {
+      active = false;
+      authListener.subscription?.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     setError(null);
     setLoading(true);
     try {
+      if (email.trim().toLowerCase() !== "staff@gt.com") {
+        setError("Only the authorized staff account can sign in here.");
+        return false;
+      }
       if (!supabase) throw new Error("Supabase not configured");
 
       // Sign in via Supabase auth
@@ -135,17 +212,20 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // Check admin_users table
       const { data: adminData, error: adminError } = await supabase
         .from("admin_users")
-        .select(`
-          *,
-          state:states(name),
-          city:cities(name),
-          ward:wards(name, ward_number)
-        `)
+        // Keep authentication independent of optional state/city/ward joins.
+        // A relationship/schema error in those tables must not block staff login.
+        .select("*")
         .eq("user_id", authData.user.id)
         .single();
 
       if (adminError || !adminData) {
-        setError("You are not authorized as an admin or supervisor.");
+        setError(`Unable to load the staff profile${adminError?.message ? `: ${adminError.message}` : "."}`);
+        await supabase.auth.signOut();
+        return false;
+      }
+
+      if (adminData.email?.toLowerCase() !== "staff@gt.com" || adminData.role !== "supervisor") {
+        setError(`Staff profile is misconfigured (email: ${adminData.email || "missing"}, role: ${adminData.role || "missing"}); expected staff@gt.com with role supervisor.`);
         await supabase.auth.signOut();
         return false;
       }
@@ -158,9 +238,6 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       const user: AdminUser = {
         ...adminData,
-        state_name: adminData.state?.name,
-        city_name: adminData.city?.name,
-        ward_name: adminData.ward?.name,
       };
 
       setAdminUser(user);
@@ -344,11 +421,12 @@ export async function updateReportStatus(
   status: string,
   notes?: string
 ) {
-  if (!supabase) return;
+  if (!supabase) throw new Error("Supabase is not configured.");
   const updates: any = { status, updated_at: new Date().toISOString() };
   if (status === "resolved") updates.resolved_at = new Date().toISOString();
   if (notes) updates.resolution_notes = notes;
-  await supabase.from("waste_reports").update(updates).eq("id", reportId);
+  const { error } = await supabase.from("waste_reports").update(updates).eq("id", reportId);
+  if (error) throw error;
 }
 
 /** Log waste collection */

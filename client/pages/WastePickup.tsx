@@ -92,7 +92,8 @@ export default function WastePickup() {
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       setIsSubmitting(true);
-      const uid = user?.id || 'mock-user-1';
+      if (!user) throw new Error('Sign in with your GreenTrace account before scheduling a pickup.');
+      const uid = user.id;
       const pickupDateTime = new Date(values.pickupDate);
       const timeSlots = {
         morning: 9,
