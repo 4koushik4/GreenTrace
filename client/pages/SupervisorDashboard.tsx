@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -77,6 +77,7 @@ export default function SupervisorDashboard({ page = "reports" }: { page?: Staff
 
   const [reports, setReports] = useState<WasteReport[]>([]);
   const [pickups, setPickups] = useState<any[]>([]);
+  const [pickupLoadError, setPickupLoadError] = useState<string | null>(null);
   const [collectionLogs, setCollectionLogs] = useState<CollectionLog[]>([]);
   const [stats, setStats] = useState({ totalReports: 0, pending: 0, resolved: 0, inProgress: 0, totalWaste: 0 });
   const [loading, setLoading] = useState(true);
@@ -127,9 +128,13 @@ export default function SupervisorDashboard({ page = "reports" }: { page?: Staff
     ]);
     setReports(reportsData);
     if (supabase) {
-      const { data } = await supabase.from("pickups").select("*").order("created_at", { ascending: false });
+      const { data, error } = await supabase.from("pickups").select("*").order("created_at", { ascending: false });
       setPickups(data ?? []);
-    } else setPickups([]);
+      setPickupLoadError(error?.message ?? null);
+    } else {
+      setPickups([]);
+      setPickupLoadError("Supabase is not configured.");
+    }
     setCollectionLogs(logsData);
     setStats(statsData);
     setLoading(false);
@@ -439,7 +444,7 @@ export default function SupervisorDashboard({ page = "reports" }: { page?: Staff
             <Card className="bg-slate-900/60 border-slate-800/50">
               <CardHeader><CardTitle className="text-white">Citizen Pickup Requests</CardTitle><CardDescription className="text-gray-400">Accept or decline requests, then mark accepted pickups as collected or missed. Status changes notify the citizen.</CardDescription></CardHeader>
               <CardContent className="space-y-3">
-                {pickups.length === 0 ? <p className="py-8 text-center text-gray-500">No pickup requests yet.</p> : pickups.map((pickup) => <div key={pickup.id} className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-800/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+                {pickupLoadError ? <p role="alert" className="py-8 text-center text-red-300">Unable to load pickup requests: {pickupLoadError}</p> : pickups.length === 0 ? <p className="py-8 text-center text-gray-500">No pickup requests yet.</p> : pickups.map((pickup) => <div key={pickup.id} className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-800/40 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-white">{pickup.name} Â· {pickup.waste_type}</p><Badge>{String(pickup.status).replace("_", " ")}</Badge></div><p className="mt-1 text-sm text-slate-300">{pickup.address} Â· {new Date(pickup.pickup_date).toLocaleString()}</p><p className="text-xs text-slate-400">{pickup.phone} Â· {pickup.email}</p>{pickup.description && <p className="mt-1 text-sm text-slate-400">{pickup.description}</p>}</div>
                   <div className="flex shrink-0 gap-2">{["requested", "scheduled"].includes(pickup.status) && <><Button size="sm" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "accepted")} className="bg-green-600 hover:bg-green-700">Accept</Button><Button size="sm" variant="destructive" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "rejected")}>Decline</Button></>}{pickup.status === "accepted" && <><Button size="sm" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "collected")} className="bg-green-600 hover:bg-green-700">Collected</Button><Button size="sm" variant="outline" disabled={updatingPickup === pickup.id} onClick={() => void updatePickup(pickup.id, "missed")}>Missed</Button></>}</div>
                 </div>)}
@@ -621,4 +626,3 @@ export default function SupervisorDashboard({ page = "reports" }: { page?: Staff
     </div>
   );
 }
-
