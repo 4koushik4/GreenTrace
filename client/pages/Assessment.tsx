@@ -31,9 +31,11 @@ import {
   getDirectionsUrl,
   RecyclingFacility,
 } from "@/lib/openstreetmap";
-import { useAuth as useSbAuth, supabase } from "@/lib/supabase";
+import { useAuth as useSbAuth } from "@/lib/supabase";
 import { awardPoints } from "@/lib/voucher-operations";
 import jsQR from "jsqr";
+
+const SHARED_EVENT_QR_TOKEN = "koushik";
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -251,19 +253,12 @@ const Assessment: React.FC = () => {
     setVerifying(true);
     setQrError(null);
     try {
-      if (!sbUser?.id || !supabase) {
+      if (!sbUser?.id) {
         throw new Error("Sign in to verify a QR code.");
       }
-
-      const { data, error } = await supabase
-        .from("user_qr_codes")
-        .select("qr_code")
-        .eq("user_id", sbUser.id)
-        .maybeSingle();
-
-      if (error) throw new Error(`QR validation is unavailable: ${error.message}`);
-      if (!data?.qr_code) throw new Error("No QR verifier is registered for this account.");
-      if (value.trim() !== data.qr_code) throw new Error("Invalid QR code.");
+      if (value.trim().toLowerCase() !== SHARED_EVENT_QR_TOKEN) {
+        throw new Error("Invalid QR code.");
+      }
 
       await awardPoints(sbUser.id, 10, "QR verified");
       qrVerified.current = true;
