@@ -109,12 +109,11 @@ export default function ListingDetailPage() {
     try {
       await createOffer({
         listing_id: item.id,
-        buyer_id: user.id,
         amount: price,
       });
       toast({
         title: "Offer sent",
-        description: "Seller can accept or counter.",
+        description: "The other user can accept, decline, or counter your offer.",
       });
       setOffer("");
     } catch (cause) {

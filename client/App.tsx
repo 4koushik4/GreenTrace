@@ -32,6 +32,7 @@ import SettingsPage from "./pages/Settings";
 import MarketplacePage from "./pages/Marketplace";
 import SellItemPage from "./pages/SellItem";
 import ListingDetailPage from "./pages/ListingDetail";
+import MarketplaceOffersPage from "./pages/MarketplaceOffers";
 
 // Admin / Role-based pages
 import AdminLoginPage from "./pages/AdminLoginPage";
@@ -326,6 +327,16 @@ const App = () => {
                     <ProtectedRoute>
                       <AppLayout>
                         <MarketplacePage />
+                      </AppLayout>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/offers"
+                  element={
+                    <ProtectedRoute>
+                      <AppLayout>
+                        <MarketplaceOffersPage />
                       </AppLayout>
                     </ProtectedRoute>
                   }
