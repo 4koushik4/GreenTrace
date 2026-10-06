@@ -12,6 +12,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/nearby-centres"
+  to = "/.netlify/functions/nearby-centres"
+  status = 200
+
+[[redirects]]
+  from = "/api/chat"
+  to = "/.netlify/functions/chat"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
