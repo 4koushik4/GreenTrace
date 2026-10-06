@@ -1,4 +1,4 @@
-import { requestRoboflowPrediction, RoboflowProxyError } from "../../server/roboflow-proxy";
+import { requestRoboflowPrediction, RoboflowProxyError } from "../../server/roboflow-proxy.js";
 
 type ApiRequest = AsyncIterable<Uint8Array | string> & { method?: string };
 type ApiResponse = {
