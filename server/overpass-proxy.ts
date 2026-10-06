@@ -6,6 +6,9 @@ const OVERPASS_ENDPOINTS = [
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RADIUS_METERS = 50_000;
+const CACHE_TTL_MS = 5 * 60_000;
+const CACHE_LIMIT = 50;
+const responseCache = new Map<string, { expiresAt: number; result: unknown }>();
 
 export class NearbySearchError extends Error {
   readonly status: number;
@@ -31,7 +34,17 @@ export async function requestNearbyFacilities(input: unknown) {
     throw new NearbySearchError("Choose a valid location and search radius.", 400);
   }
 
-  const query = `[out:json][timeout:10];nwr(around:${Math.round(radiusMeters)},${lat},${lng})["amenity"~"^(recycling|waste_disposal|waste_transfer_station)$"];out center tags;`;
+  const radius = Math.round(radiusMeters);
+  const cacheKey = `${lat.toFixed(4)}:${lng.toFixed(4)}:${radius}`;
+  const cached = responseCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+  responseCache.delete(cacheKey);
+
+  for (const [key, entry] of responseCache) {
+    if (entry.expiresAt <= Date.now()) responseCache.delete(key);
+  }
+
+  const query = `[out:json][timeout:10];nwr(around:${radius},${lat},${lng})["amenity"~"^(recycling|waste_disposal|waste_transfer_station)$"];out center tags;`;
   const failures: string[] = [];
 
   for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -55,7 +68,12 @@ export async function requestNearbyFacilities(input: unknown) {
         continue;
       }
 
-      return await response.json();
+      const result = await response.json();
+      if (responseCache.size >= CACHE_LIMIT) {
+        responseCache.delete(responseCache.keys().next().value as string);
+      }
+      responseCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, result });
+      return result;
     } catch (error) {
       failures.push(
         error instanceof Error && error.name === "AbortError"

@@ -12,6 +12,7 @@ import aiChatRouter from "./routes/ai-chat";
 import { handlePredict } from "./routes/predict";
 import { requestRoboflowPrediction, RoboflowProxyError } from "./roboflow-proxy";
 import { NearbySearchError, requestNearbyFacilities } from "./overpass-proxy";
+import { GroqChatError, requestGroqChat } from "./groq-proxy";
 
 export function createServer() {
   const app = express();
@@ -47,89 +48,16 @@ export function createServer() {
     }
   });
 
-  // =====================================================
-  // Groq AI Chat endpoint
-  // =====================================================
   app.post("/api/chat", async (req, res) => {
     try {
-      const { message, history } = req.body;
-
-      if (!message || typeof message !== "string") {
-        return res.status(400).json({ error: "Message is required" });
+      return res.json(await requestGroqChat(req.body));
+    } catch (error) {
+      if (error instanceof GroqChatError) {
+        return res.status(error.status).json({ error: error.message, reply: error.reply });
       }
-
-      const apiKey = process.env.GROQ_API_KEY;
-      console.log("[Groq] Received message:", message.slice(0, 80));
-      console.log("[Groq] API Key exists:", !!apiKey);
-
-      if (!apiKey) {
-        return res.status(500).json({
-          error: "GROQ_API_KEY not configured",
-          reply: "AI chat is not configured. Please add GROQ_API_KEY to .env file.",
-        });
-      }
-
-      // Build message history for context
-      const chatMessages: any[] = [
-        {
-          role: "system",
-          content: `You are Green India AI Assistant — a helpful, concise, emoji-friendly assistant for a recycling & sustainability platform.
-You help users with: waste segregation, buyback orders, marketplace, eco points, pickup scheduling, recycling guidance, environmental laws, app navigation, sustainability tips.
-Rules: Be short and helpful. Use emojis sparingly. You are NOT ChatGPT — you are Green India AI.`,
-        },
-      ];
-
-      // Append conversation history if provided
-      if (Array.isArray(history)) {
-        for (const h of history.slice(-10)) {
-          chatMessages.push({
-            role: h.sender === "user" ? "user" : "assistant",
-            content: h.body,
-          });
-        }
-      }
-
-      chatMessages.push({ role: "user", content: message });
-
-      const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: "openai/gpt-oss-20b",
-            messages: chatMessages,
-            temperature: 0.7,
-            max_tokens: 1024,
-          }),
-        }
-      );
-
-      console.log("[Groq] Response status:", response.status);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("[Groq] API error body:", errorText);
-        return res.status(502).json({
-          error: "Groq API returned an error",
-          reply: "Sorry, the AI service is temporarily unavailable. Please try again in a moment.",
-        });
-      }
-
-      const data = await response.json();
-      const reply = data.choices?.[0]?.message?.content;
-
-      res.json({
-        reply: reply || "Sorry, I couldn't generate a response.",
-      });
-    } catch (err: any) {
-      console.error("[Groq] Server error:", err?.message || err);
-      res.status(500).json({
-        error: "Internal server error",
-        reply: "Sorry, something went wrong on our end. Please try again.",
+      return res.status(502).json({
+        error: "The AI service is temporarily unavailable.",
+        reply: "Sorry, the AI service is temporarily unavailable. Please try again in a moment.",
       });
     }
   });
