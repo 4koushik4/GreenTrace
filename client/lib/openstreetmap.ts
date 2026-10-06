@@ -6,47 +6,6 @@ import { useState, useEffect } from "react";
 import { maps as mapsConfig } from "./config";
 import { supabase } from "./supabase";
 
-const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.nchc.org.tw/api/interpreter",
-];
-
-async function fetchOverpass(query: string): Promise<{ elements: any[] }> {
-  const failures: string[] = [];
-
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        failures.push(`${new URL(endpoint).host} returned HTTP ${response.status}`);
-        continue;
-      }
-
-      return await response.json();
-    } catch (error) {
-      failures.push(
-        error instanceof Error && error.name === "AbortError"
-          ? `${new URL(endpoint).host} timed out`
-          : `${new URL(endpoint).host} could not be reached`,
-      );
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  throw new Error(
-    `Nearby map search is temporarily unavailable. Overpass services did not respond (${failures.join("; ")}). Please try again shortly.`,
-  );
-}
 
 // Location and map types
 export interface Location {
@@ -336,15 +295,23 @@ export const useRecyclingCentersSearch = () => {
     setError(null);
 
     try {
-      // A radial query limits the work Overpass must do compared with a bounding box.
-      const radiusMeters = Math.round(radiusKm * 1000);
-      const overpassQuery = `
-        [out:json][timeout:20];
-        nwr(around:${radiusMeters},${location.lat},${location.lng})
-          ["amenity"~"^(recycling|waste_disposal|waste_transfer_station)$"];
-        out center tags;
-      `;
-      const data = await fetchOverpass(overpassQuery);
+      const response = await fetch("/api/nearby-centres", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lat: location.lat,
+          lng: location.lng,
+          radiusMeters: Math.round(radiusKm * 1000),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof data?.message === "string"
+            ? data.message
+            : "Nearby map search is temporarily unavailable. Please try again shortly.",
+        );
+      }
 
       // Process and format results with enhanced data
       const facilities: RecyclingFacility[] = await Promise.all(

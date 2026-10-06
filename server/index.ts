@@ -11,6 +11,7 @@ import cors from "cors";
 import aiChatRouter from "./routes/ai-chat";
 import { handlePredict } from "./routes/predict";
 import { requestRoboflowPrediction, RoboflowProxyError } from "./roboflow-proxy";
+import { NearbySearchError, requestNearbyFacilities } from "./overpass-proxy";
 
 export function createServer() {
   const app = express();
@@ -32,6 +33,17 @@ export function createServer() {
         return res.status(error.status).json({ error: error.code, message: error.message });
       }
       return res.status(500).json({ error: "proxy_error", message: "Unable to analyze this image. Please try again." });
+    }
+  });
+
+  app.post("/api/nearby-centres", async (req, res) => {
+    try {
+      return res.json(await requestNearbyFacilities(req.body));
+    } catch (error) {
+      if (error instanceof NearbySearchError) {
+        return res.status(error.status).json({ error: "nearby_search_failed", message: error.message });
+      }
+      return res.status(502).json({ error: "nearby_search_failed", message: "Nearby map search is temporarily unavailable. Please try again shortly." });
     }
   });
 
