@@ -1,4 +1,4 @@
-import { ROBOFLOW_ENDPOINT } from "../shared/roboflow";
+import { ROBOFLOW_ENDPOINT } from "../shared/roboflow.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_IMAGE_LENGTH = 14_000_000;
