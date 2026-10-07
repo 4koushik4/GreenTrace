@@ -12,6 +12,56 @@ export class GroqChatError extends Error {
   }
 }
 
+type GroqMessage = { role: "system" | "user" | "assistant"; content: string };
+
+async function requestGroqReply(messages: GroqMessage[], maxTokens: number) {
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  if (!apiKey) {
+    console.error("GROQ_API_KEY is not available to the server function.");
+    throw new GroqChatError(503, "Groq API key is unavailable to this deployment. Check its Vercel environment scope and redeploy.");
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-oss-20b",
+        messages,
+        temperature: 0.7,
+        max_tokens: maxTokens,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new GroqChatError(502, "Sorry, the AI service is temporarily unavailable. Please try again in a moment.");
+    }
+
+    const data = await response.json();
+    const reply = data?.choices?.[0]?.message?.content;
+    if (typeof reply !== "string" || !reply.trim()) {
+      throw new GroqChatError(502, "The AI service did not return a response. Please try again.");
+    }
+
+    return reply.trim();
+  } catch (error) {
+    if (error instanceof GroqChatError) throw error;
+    if (controller.signal.aborted) {
+      throw new GroqChatError(504, "The Eco Assistant took too long to respond. Please try again.");
+    }
+    throw new GroqChatError(502, "Sorry, the AI service is temporarily unavailable. Please try again in a moment.");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function requestGroqChat(input: unknown) {
   if (!input || typeof input !== "object") {
     throw new GroqChatError(400, "Send a message to the Eco Assistant.");
@@ -22,12 +72,7 @@ export async function requestGroqChat(input: unknown) {
     throw new GroqChatError(400, "Enter a message of up to 4,000 characters.");
   }
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    throw new GroqChatError(503, "Eco Assistant is not configured yet. Please try again later.");
-  }
-
-  const messages = [
+  const messages: GroqMessage[] = [
     {
       role: "system",
       content: "You are Green India AI Assistant, a helpful, concise assistant for waste sorting, recycling, sustainability, and app guidance. Be friendly and practical.",
@@ -50,43 +95,42 @@ export async function requestGroqChat(input: unknown) {
   }
   messages.push({ role: "user", content: message });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  return { reply: await requestGroqReply(messages, 1024) };
+}
 
-  try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-oss-20b",
-        messages,
-        temperature: 0.7,
-        max_tokens: 1024,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw new GroqChatError(502, "Sorry, the AI service is temporarily unavailable. Please try again in a moment.");
-    }
-
-    const data = await response.json();
-    const reply = data?.choices?.[0]?.message?.content;
-    if (typeof reply !== "string" || !reply.trim()) {
-      throw new GroqChatError(502, "The AI service did not return a response. Please try again.");
-    }
-
-    return { reply };
-  } catch (error) {
-    if (error instanceof GroqChatError) throw error;
-    if (controller.signal.aborted) {
-      throw new GroqChatError(504, "The Eco Assistant took too long to respond. Please try again.");
-    }
-    throw new GroqChatError(502, "Sorry, the AI service is temporarily unavailable. Please try again in a moment.");
-  } finally {
-    clearTimeout(timeout);
+export async function requestGroqDisposalGuidance(input: unknown) {
+  if (!input || typeof input !== "object") {
+    throw new GroqChatError(400, "Waste material details are required.");
   }
+
+  const { material, category } = input as Record<string, unknown>;
+  if (
+    typeof material !== "string" || !material.trim() || material.length > 100 ||
+    typeof category !== "string" || !category.trim() || category.length > 50
+  ) {
+    throw new GroqChatError(400, "A valid waste material and category are required.");
+  }
+
+  const reply = await requestGroqReply([
+    {
+      role: "system",
+      content: "Give concise, safe household waste disposal instructions. Rules vary by location, so mention checking local council rules when recycling acceptance may vary. Do not invent collection locations. Return 2 or 3 actionable short bullet points and no other text.",
+    },
+    {
+      role: "user",
+      content: `Give disposal instructions for ${material.trim()} (category: ${category.trim()}).`,
+    },
+  ], 250);
+
+  const tips = reply
+    .split(/\n+/)
+    .map((tip) => tip.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (tips.length === 0) {
+    throw new GroqChatError(502, "The AI service did not return disposal instructions. Please try again.");
+  }
+
+  return { tips };
 }
