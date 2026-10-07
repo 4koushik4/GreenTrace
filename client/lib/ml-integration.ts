@@ -60,6 +60,24 @@ export function validateImageForClassification(file: File) {
   return { isValid: true, error: null };
 }
 
+const fetchDisposalTips = async (material: string, category: string) => {
+  try {
+    const response = await fetch("/api/disposal-guidance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ material, category }),
+    });
+    if (!response.ok) return undefined;
+
+    const data: { tips?: unknown } = await response.json();
+    return Array.isArray(data.tips) && data.tips.every((tip) => typeof tip === "string")
+      ? data.tips
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const mapPredictionError = (error: unknown): WasteClassificationError => {
   if (error instanceof RoboflowPredictionError) {
     return new WasteClassificationError(error.kind, error.message);
@@ -110,6 +128,7 @@ export async function classifyWaste(
   }
 
   const guidance = MATERIAL_GUIDANCE[primary.materialKey];
+  const generatedTips = await fetchDisposalTips(primary.material, category.label);
   return {
     detailedClass: primary.material,
     material: primary.material,
@@ -120,7 +139,7 @@ export async function classifyWaste(
     confidence: primary.confidence,
     predictions: prediction.predictions,
     processingTime: Math.round(performance.now() - startedAt),
-    tips: guidance?.tips,
+    tips: generatedTips ?? guidance?.tips,
     disposalMethod: guidance?.disposalMethod,
   };
 }

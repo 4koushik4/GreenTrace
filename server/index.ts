@@ -12,7 +12,7 @@ import aiChatRouter from "./routes/ai-chat";
 import { handlePredict } from "./routes/predict";
 import { requestRoboflowPrediction, RoboflowProxyError } from "./roboflow-proxy";
 import { NearbySearchError, requestNearbyFacilities } from "./overpass-proxy";
-import { GroqChatError, requestGroqChat } from "./groq-proxy";
+import { GroqChatError, requestGroqChat, requestGroqDisposalGuidance } from "./groq-proxy";
 
 export function createServer() {
   const app = express();
@@ -59,6 +59,17 @@ export function createServer() {
         error: "The AI service is temporarily unavailable.",
         reply: "Sorry, the AI service is temporarily unavailable. Please try again in a moment.",
       });
+    }
+  });
+
+  app.post("/api/disposal-guidance", async (req, res) => {
+    try {
+      return res.json(await requestGroqDisposalGuidance(req.body));
+    } catch (error) {
+      if (error instanceof GroqChatError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      return res.status(502).json({ error: "Disposal guidance is temporarily unavailable." });
     }
   });
 
