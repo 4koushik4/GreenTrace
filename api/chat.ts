@@ -1,4 +1,4 @@
-import { GroqChatError, requestGroqChat } from "../server/groq-proxy";
+import { GroqChatError, requestGroqChat } from "../server/groq-proxy.js";
 
 type ApiRequest = { method?: string; body?: unknown };
 type ApiResponse = {

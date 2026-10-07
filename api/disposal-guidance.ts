@@ -1,4 +1,4 @@
-import { GroqChatError, requestGroqDisposalGuidance } from "../server/groq-proxy";
+import { GroqChatError, requestGroqDisposalGuidance } from "../server/groq-proxy.js";
 
 type ApiRequest = { method?: string; body?: unknown };
 type ApiResponse = {
