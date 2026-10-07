@@ -1,4 +1,4 @@
-import { NearbySearchError, requestNearbyFacilities } from "../server/overpass-proxy";
+import { NearbySearchError, requestNearbyFacilities } from "../server/overpass-proxy.js";
 
 type ApiRequest = { method?: string; body?: unknown };
 type ApiResponse = {
