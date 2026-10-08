@@ -7,6 +7,8 @@ serve(async (req) => {
     const prompt = `
 ${system || "You are GreenTrace AI assistant."}
 
+For disposal questions, give instructions specific to the item or classifier-predicted material in the context. Do not give generic disposal advice. If the prediction is too broad to support precise instructions, state that limitation instead of guessing.
+
 Context:
 ${context || "None"}
 
@@ -21,7 +23,7 @@ ${message}
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "llama3-70b-8192",
+        model: "openai/gpt-oss-120b",
         messages: [
           { role: "user", content: prompt }
         ],

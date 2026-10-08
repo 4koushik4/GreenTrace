@@ -32,7 +32,7 @@ async function requestGroqReply(messages: GroqMessage[], maxTokens: number) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "openai/gpt-oss-20b",
+        model: "openai/gpt-oss-120b",
         messages,
         temperature: 0.7,
         max_tokens: maxTokens,
@@ -75,7 +75,7 @@ export async function requestGroqChat(input: unknown) {
   const messages: GroqMessage[] = [
     {
       role: "system",
-      content: "You are Green India AI Assistant, a helpful, concise assistant for waste sorting, recycling, sustainability, and app guidance. Be friendly and practical.",
+      content: "You are Green India AI Assistant, a helpful, concise assistant for waste sorting, recycling, sustainability, and app guidance. Be friendly and practical. For disposal questions, give item-specific instructions based on the exact item or classifier-predicted material the user provides. Do not answer with generic recycling or disposal advice; if the item is unclear, ask what it is.",
     },
   ];
 
@@ -114,11 +114,11 @@ export async function requestGroqDisposalGuidance(input: unknown) {
   const reply = await requestGroqReply([
     {
       role: "system",
-      content: "Give concise, safe household waste disposal instructions. Rules vary by location, so mention checking local council rules when recycling acceptance may vary. Do not invent collection locations. Return 2 or 3 actionable short bullet points and no other text.",
+      content: "Give concise, safe household disposal instructions tailored specifically to the classifier prediction provided by the user. Use both the predicted material and category to determine the steps, and explicitly name the predicted material in the guidance. Do not give generic waste-sorting tips or advice that could apply to unrelated materials. If the prediction is too broad to support item-specific steps, state that limitation and request a more precise identification rather than guessing. When recycling acceptance may vary, briefly advise checking local council rules; never invent collection locations. Return 2 or 3 actionable short bullet points and no other text.",
     },
     {
       role: "user",
-      content: `Give disposal instructions for ${material.trim()} (category: ${category.trim()}).`,
+      content: `Classifier prediction: material = ${material.trim()}; category = ${category.trim()}. Give disposal instructions specifically for this predicted material and category.`,
     },
   ], 250);
 

@@ -16,9 +16,9 @@ router.post("/chat", async (req, res) => {
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "llama3-70b-8192",
+        model: "openai/gpt-oss-120b",
         messages: [
-          { role: "system", content: "You are Green India recycling assistant." },
+          { role: "system", content: "You are Green India recycling assistant. Keep answers concise and practical. For disposal questions, give instructions specific to the item or classifier-predicted material; do not give generic disposal advice. If the material is unclear, ask for clarification." },
           { role: "user", content: message },
         ],
       }),
